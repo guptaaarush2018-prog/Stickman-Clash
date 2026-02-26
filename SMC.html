@@ -8,12 +8,14 @@
 </head>
 <body>
 
-<!-- Menu screen -->
+<!-- ============================================================
+     MENU SCREEN
+     ============================================================ -->
 <div id="menu">
   <h1 class="game-title">STICKMAN CLASH</h1>
   <p class="game-subtitle">Local Multiplayer Platform Fighter</p>
 
-  <!-- Mode selection -->
+  <!-- MODE SELECTION -->
   <div>
     <p class="section-label">Game Mode</p>
     <div class="mode-cards">
@@ -30,22 +32,21 @@
     </div>
   </div>
 
-  <!-- Arena selection -->
+  <!-- ARENA SELECTION -->
   <div>
     <p class="section-label">Arena</p>
     <div class="arena-cards">
-      <div class="arena-card active" data-arena="grass" onclick="selectArena('grass')">🌿 Grass</div>
-      <div class="arena-card" data-arena="lava" onclick="selectArena('lava')">🌋 Lava</div>
-      <div class="arena-card" data-arena="space" onclick="selectArena('space')">🌌 Space</div>
-      <div class="arena-card" data-arena="city" onclick="selectArena('city')">🏙 City</div>
-      <div class="arena-card" data-arena="random" onclick="selectArena('random')">🎲 Random</div>
+      <div class="arena-card active" data-arena="grass"  onclick="selectArena('grass')">🌿 Grass</div>
+      <div class="arena-card"        data-arena="lava"   onclick="selectArena('lava')">🌋 Lava</div>
+      <div class="arena-card"        data-arena="space"  onclick="selectArena('space')">🌌 Space</div>
+      <div class="arena-card"        data-arena="city"   onclick="selectArena('city')">🏙 City</div>
+      <div class="arena-card"        data-arena="random" onclick="selectArena('random')">🎲 Random</div>
     </div>
   </div>
 
-  <!-- Player configuration -->
+  <!-- PLAYER CONFIG -->
   <div class="players-config">
-
-    <!-- Player 1 -->
+    <!-- PLAYER 1 -->
     <div class="player-config" id="p1Config">
       <h3>Player 1</h3>
       <p class="controls-hint">WASD · Space · Q · Shift</p>
@@ -68,7 +69,7 @@
 
     <div class="vs-divider">VS</div>
 
-    <!-- Player 2 / Bot -->
+    <!-- PLAYER 2 / BOT -->
     <div class="player-config" id="p2Config">
       <h3 id="p2Title">Player 2</h3>
       <p class="controls-hint" id="p2Hint">← → ↑ · Enter · . · /</p>
@@ -98,7 +99,7 @@
     </div>
   </div>
 
-  <!-- Lives selection -->
+  <!-- LIVES SELECTION -->
   <div>
     <p class="section-label">Lives Per Player</p>
     <div class="arena-cards">
@@ -117,13 +118,16 @@
   </div>
 </div>
 
-<!-- Game wrapper -->
+<!-- ============================================================
+     GAME WRAPPER — fullscreen container for HUD + canvas
+     ============================================================ -->
 <div id="gameWrapper">
 
-<!-- HUD -->
+<!-- ============================================================
+     HUD (shown while playing)
+     ============================================================ -->
 <div id="hud">
-
-  <!-- Player 1 HUD -->
+  <!-- Player 1 side -->
   <div class="hud-side" id="hud-p1">
     <div class="hud-name" id="p1HudName" style="color:#00d4ff">PLAYER 1</div>
     <div class="health-bar-wrap">
@@ -132,12 +136,12 @@
     <div class="lives-display" id="p1Lives">❤❤❤</div>
   </div>
 
-  <!-- Center kill feed -->
+  <!-- Center / kill feed -->
   <div class="hud-center">
     <div id="killFeed"></div>
   </div>
 
-  <!-- Player 2 HUD -->
+  <!-- Player 2 side -->
   <div class="hud-side right" id="hud-p2">
     <div class="hud-name" id="p2HudName" style="color:#ff4455">PLAYER 2</div>
     <div class="health-bar-wrap">
@@ -145,15 +149,18 @@
     </div>
     <div class="lives-display" id="p2Lives">❤❤❤</div>
   </div>
-
 </div>
 
-<!-- Game canvas -->
+<!-- ============================================================
+     GAME CANVAS
+     ============================================================ -->
 <canvas id="gameCanvas" width="900" height="520"></canvas>
 
-</div>
+</div><!-- /#gameWrapper -->
 
-<!-- Pause overlay -->
+<!-- ============================================================
+     PAUSE OVERLAY
+     ============================================================ -->
 <div class="overlay-screen" id="pauseOverlay">
   <div class="overlay-box">
     <h2>Paused</h2>
@@ -164,7 +171,9 @@
   </div>
 </div>
 
-<!-- Game over overlay -->
+<!-- ============================================================
+     GAME OVER OVERLAY
+     ============================================================ -->
 <div class="overlay-screen" id="gameOverOverlay">
   <div class="overlay-box">
     <h2 id="winnerText">PLAYER 1 WINS!</h2>
