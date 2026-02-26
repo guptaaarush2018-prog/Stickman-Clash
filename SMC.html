@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stickman Clash</title>
+  <link rel="stylesheet" href="SMC.css">
+</head>
+<body>
+
+<!-- ============================================================
+     MENU SCREEN
+     ============================================================ -->
+<div id="menu">
+  <h1 class="game-title">STICKMAN CLASH</h1>
+  <p class="game-subtitle">Local Multiplayer Platform Fighter</p>
+
+  <!-- MODE SELECTION -->
+  <div>
+    <p class="section-label">Game Mode</p>
+    <div class="mode-cards">
+      <div class="mode-card active" data-mode="2p" onclick="selectMode('2p')">
+        <div class="mode-icon">👥</div>
+        <div class="mode-name">2 Player</div>
+        <div class="mode-desc">Two humans, same keyboard</div>
+      </div>
+      <div class="mode-card" data-mode="bot" onclick="selectMode('bot')">
+        <div class="mode-icon">🤖</div>
+        <div class="mode-name">Vs Bot</div>
+        <div class="mode-desc">Fight an AI opponent</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ARENA SELECTION -->
+  <div>
+    <p class="section-label">Arena</p>
+    <div class="arena-cards">
+      <div class="arena-card active" data-arena="grass"  onclick="selectArena('grass')">🌿 Grass</div>
+      <div class="arena-card"        data-arena="lava"   onclick="selectArena('lava')">🌋 Lava</div>
+      <div class="arena-card"        data-arena="space"  onclick="selectArena('space')">🌌 Space</div>
+      <div class="arena-card"        data-arena="city"   onclick="selectArena('city')">🏙 City</div>
+      <div class="arena-card"        data-arena="random" onclick="selectArena('random')">🎲 Random</div>
+    </div>
+  </div>
+
+  <!-- PLAYER CONFIG -->
+  <div class="players-config">
+    <!-- PLAYER 1 -->
+    <div class="player-config" id="p1Config">
+      <h3>Player 1</h3>
+      <p class="controls-hint">WASD · Space · Q · Shift</p>
+      <div class="config-row">
+        <label>Color</label>
+        <input type="color" id="p1Color" value="#00d4ff">
+      </div>
+      <div class="config-row">
+        <label>Weapon</label>
+        <select id="p1Weapon">
+          <option value="random">🎲 Random</option>
+          <option value="sword">⚔️ Sword</option>
+          <option value="hammer">🔨 Hammer</option>
+          <option value="gun">🔫 Gun</option>
+          <option value="axe">🪓 Axe</option>
+          <option value="spear">🗡️ Spear</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="vs-divider">VS</div>
+
+    <!-- PLAYER 2 / BOT -->
+    <div class="player-config" id="p2Config">
+      <h3 id="p2Title">Player 2</h3>
+      <p class="controls-hint" id="p2Hint">← → ↑ · Enter · . · /</p>
+      <div class="config-row" id="p2ColorRow">
+        <label>Color</label>
+        <input type="color" id="p2Color" value="#ff4455">
+      </div>
+      <div class="config-row">
+        <label>Weapon</label>
+        <select id="p2Weapon">
+          <option value="random">🎲 Random</option>
+          <option value="sword">⚔️ Sword</option>
+          <option value="hammer">🔨 Hammer</option>
+          <option value="gun">🔫 Gun</option>
+          <option value="axe">🪓 Axe</option>
+          <option value="spear">🗡️ Spear</option>
+        </select>
+      </div>
+      <div class="config-row" id="difficultyRow" style="display:none">
+        <label>Difficulty</label>
+        <select id="difficulty">
+          <option value="easy">😌 Easy</option>
+          <option value="medium" selected>😐 Medium</option>
+          <option value="hard">😤 Hard</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIVES SELECTION -->
+  <div>
+    <p class="section-label">Lives Per Player</p>
+    <div class="arena-cards">
+      <div class="arena-card" data-lives="1" onclick="selectLives(1)">1 Life</div>
+      <div class="arena-card active" data-lives="3" onclick="selectLives(3)">3 Lives</div>
+      <div class="arena-card" data-lives="5" onclick="selectLives(5)">5 Lives</div>
+    </div>
+  </div>
+
+  <button class="btn btn-start" onclick="startGame()">▶ START GAME</button>
+
+  <div class="controls-info">
+    <div>P1: <strong>WASD</strong> move · <strong>hold A/D/W</strong> boost · <strong>S</strong> shield (30 s CD) · <strong>Space</strong> attack · <strong>Q</strong> ability</div>
+    <div>P2: <strong>Arrow Keys</strong> move · <strong>hold ←/→/↑</strong> boost · <strong>↓</strong> shield (30 s CD) · <strong>Enter</strong> attack · <strong>.</strong> ability</div>
+    <div><strong>Esc</strong> pause</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     GAME WRAPPER — fullscreen container for HUD + canvas
+     ============================================================ -->
+<div id="gameWrapper">
+
+<!-- ============================================================
+     HUD (shown while playing)
+     ============================================================ -->
+<div id="hud">
+  <!-- Player 1 side -->
+  <div class="hud-side" id="hud-p1">
+    <div class="hud-name" id="p1HudName" style="color:#00d4ff">PLAYER 1</div>
+    <div class="health-bar-wrap">
+      <div class="health-bar" id="p1Health"></div>
+    </div>
+    <div class="lives-display" id="p1Lives">❤❤❤</div>
+  </div>
+
+  <!-- Center / kill feed -->
+  <div class="hud-center">
+    <div id="killFeed"></div>
+  </div>
+
+  <!-- Player 2 side -->
+  <div class="hud-side right" id="hud-p2">
+    <div class="hud-name" id="p2HudName" style="color:#ff4455">PLAYER 2</div>
+    <div class="health-bar-wrap">
+      <div class="health-bar" id="p2Health"></div>
+    </div>
+    <div class="lives-display" id="p2Lives">❤❤❤</div>
+  </div>
+</div>
+
+<!-- ============================================================
+     GAME CANVAS
+     ============================================================ -->
+<canvas id="gameCanvas" width="900" height="520"></canvas>
+
+</div><!-- /#gameWrapper -->
+
+<!-- ============================================================
+     PAUSE OVERLAY
+     ============================================================ -->
+<div class="overlay-screen" id="pauseOverlay">
+  <div class="overlay-box">
+    <h2>Paused</h2>
+    <div class="btn-row">
+      <button class="btn btn-start" onclick="resumeGame()">▶ Resume</button>
+      <button class="btn" onclick="backToMenu()">⬅ Menu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================
+     GAME OVER OVERLAY
+     ============================================================ -->
+<div class="overlay-screen" id="gameOverOverlay">
+  <div class="overlay-box">
+    <h2 id="winnerText">PLAYER 1 WINS!</h2>
+    <div id="statsDisplay"></div>
+    <div class="btn-row">
+      <button class="btn btn-start" onclick="startGame()">▶ Play Again</button>
+      <button class="btn" onclick="backToMenu()">⬅ Menu</button>
+    </div>
+  </div>
+</div>
+
+<script src="SMC.js"></script>
+</body>
+</html>
