@@ -1,0 +1,449 @@
+/* ============================================================
+   STICKMAN CLASH — Full Theme
+   ============================================================ */
+
+:root {
+  --bg:       #07070f;
+  --bg2:      #0e0e1c;
+  --bg3:      #16162a;
+  --p1:       #00d4ff;
+  --p2:       #ff4455;
+  --accent:   #7c3aed;
+  --gold:     #ffd700;
+  --text:     #dde4ff;
+  --muted:    #8890b0;
+  --border:   rgba(255,255,255,0.08);
+  --radius:   10px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%; height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', Arial, sans-serif;
+  text-align: center;
+}
+
+/* ============================================================
+   GAME WRAPPER — fullscreen container for HUD + canvas
+   ============================================================ */
+#gameWrapper {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #000;
+  z-index: 1;
+}
+
+/* ============================================================
+   MENU  (sits outside #gameWrapper so it can scroll)
+   ============================================================ */
+#menu {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 28px 16px 40px;
+  gap: 22px;
+  min-height: 100vh;
+  overflow-y: auto;
+  animation: fadeIn 0.4s ease;
+}
+
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+
+.game-title {
+  font-size: 3.4rem;
+  font-weight: 900;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  background: linear-gradient(135deg, var(--p1) 0%, var(--accent) 50%, var(--p2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  filter: drop-shadow(0 0 24px rgba(0, 212, 255, 0.35));
+  line-height: 1;
+}
+
+.game-subtitle {
+  color: var(--muted);
+  font-size: 0.85rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  margin-top: -14px;
+}
+
+/* Section label */
+.section-label {
+  font-size: 0.7rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+/* ============================================================
+   MODE CARDS
+   ============================================================ */
+.mode-cards {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.mode-card {
+  width: 160px;
+  padding: 18px 12px 14px;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg2);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.mode-card:hover {
+  border-color: rgba(255,255,255,0.25);
+  background: var(--bg3);
+  transform: translateY(-2px);
+}
+
+.mode-card.active {
+  border-color: var(--p1);
+  background: rgba(0, 212, 255, 0.08);
+  box-shadow: 0 0 18px rgba(0, 212, 255, 0.2);
+}
+
+.mode-icon { font-size: 2rem; margin-bottom: 8px; }
+.mode-name { font-weight: 800; font-size: 1rem; letter-spacing: 1px; margin-bottom: 4px; }
+.mode-desc { font-size: 0.72rem; color: var(--muted); }
+
+/* ============================================================
+   ARENA CARDS
+   ============================================================ */
+.arena-cards {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.arena-card {
+  padding: 8px 16px;
+  border: 2px solid var(--border);
+  border-radius: 20px;
+  background: var(--bg2);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 1px;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+
+.arena-card:hover { border-color: rgba(255,255,255,0.2); background: var(--bg3); }
+.arena-card.active { border-color: var(--gold); color: var(--gold); background: rgba(255,215,0,0.08); }
+
+/* ============================================================
+   PLAYER CONFIG
+   ============================================================ */
+.players-config {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: center;
+  flex-wrap: wrap;
+  width: 100%;
+  max-width: 600px;
+}
+
+.player-config {
+  flex: 1;
+  min-width: 200px;
+  max-width: 240px;
+  background: var(--bg2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.player-config h3 {
+  font-size: 0.75rem;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+#p1Config h3 { color: var(--p1); }
+#p2Config h3 { color: var(--p2); }
+
+.controls-hint {
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: -6px;
+}
+
+.config-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.config-row label {
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ============================================================
+   FORM CONTROLS
+   ============================================================ */
+select, input[type="color"], input[type="number"] {
+  background: var(--bg3);
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 0.8rem;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+select:hover, input:hover { border-color: rgba(255,255,255,0.25); }
+select:focus { border-color: var(--p1); }
+
+input[type="color"] {
+  width: 40px;
+  height: 30px;
+  padding: 2px;
+  cursor: pointer;
+}
+
+.vs-divider {
+  font-size: 1.4rem;
+  font-weight: 900;
+  color: var(--muted);
+  align-self: center;
+  padding-top: 16px;
+}
+
+/* ============================================================
+   START BUTTON
+   ============================================================ */
+.btn {
+  padding: 10px 22px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 0.85rem;
+  font-family: inherit;
+  font-weight: 700;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  text-transform: uppercase;
+}
+
+.btn:hover {
+  background: var(--bg3);
+  border-color: rgba(255,255,255,0.25);
+  transform: translateY(-1px);
+}
+
+.btn-start {
+  padding: 14px 48px;
+  font-size: 1.05rem;
+  letter-spacing: 3px;
+  background: linear-gradient(135deg, var(--p1), var(--accent));
+  border: none;
+  color: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 24px rgba(0, 212, 255, 0.3);
+}
+
+.btn-start:hover {
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 6px 30px rgba(0, 212, 255, 0.45);
+  background: linear-gradient(135deg, #22e4ff, #9b59f5);
+  border: none;
+}
+
+.controls-info {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.7;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 18px;
+  background: var(--bg2);
+}
+
+/* ============================================================
+   CANVAS  (JS sets width/height CSS; internal res stays 900×520)
+   ============================================================ */
+#gameCanvas {
+  display: none;
+  background: #111;
+  /* JS will set inline width/height/marginLeft */
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   HUD
+   ============================================================ */
+#hud {
+  display: none;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 16px 6px;
+  background: rgba(7,7,15,0.92);
+  border-bottom: 1px solid var(--border);
+  width: 100%;        /* span the full viewport */
+  flex-shrink: 0;
+  gap: 10px;
+}
+
+.hud-side {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+}
+
+.hud-side.right {
+  align-items: flex-end;
+}
+
+.hud-name {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.health-bar-wrap {
+  width: 100%;
+  height: 10px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.health-bar {
+  height: 100%;
+  background: #44dd44;
+  border-radius: 6px;
+  transition: width 0.12s ease, background 0.3s ease;
+}
+
+.lives-display {
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+}
+
+.hud-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 160px;
+}
+
+#killFeed {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.kill-msg {
+  animation: fadeIn 0.2s ease;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+
+/* ============================================================
+   OVERLAYS (Pause / Game Over)
+   ============================================================ */
+.overlay-screen {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(7,7,15,0.88);
+  justify-content: center;
+  align-items: center;
+  z-index: 100;
+  animation: fadeIn 0.25s ease;
+}
+
+.overlay-box {
+  background: var(--bg2);
+  border: 1.5px solid rgba(255,255,255,0.12);
+  border-radius: 16px;
+  padding: 36px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-width: 280px;
+  box-shadow: 0 8px 48px rgba(0,0,0,0.6);
+}
+
+.overlay-box h2 {
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: 3px;
+  text-transform: uppercase;
+}
+
+.overlay-box .btn-row {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.stat-row {
+  font-size: 0.88rem;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+#statsDisplay {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 20px;
+  background: var(--bg3);
+  border-radius: 8px;
+  width: 100%;
+  text-align: center;
+}
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 700px) {
+  .game-title { font-size: 2.2rem; }
+  #hud { flex-direction: column; align-items: stretch; }
+  .hud-side.right { align-items: flex-start; }
+  .hud-center { order: -1; }
+  canvas { width: 100% !important; height: auto !important; }
+}
