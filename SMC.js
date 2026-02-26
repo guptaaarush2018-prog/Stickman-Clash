@@ -1,14 +1,14 @@
 'use strict';
 
-
+// ============================================================
 // CANVAS
-
+// ============================================================
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
 
-
+// ============================================================
 // GLOBAL STATE
-
+// ============================================================
 let gameMode        = '2p';
 let selectedArena   = 'grass';
 let chosenLives     = 3;
@@ -27,9 +27,9 @@ let currentArenaKey = 'grass';
 let bgStars     = [];
 let bgBuildings = [];
 
-
+// ============================================================
 // ARENA DEFINITIONS
-
+// ============================================================
 const ARENAS = {
   grass: {
     sky:         ['#68c0ea', '#aadaf5'],
@@ -100,9 +100,9 @@ const ARENAS = {
   }
 };
 
-
+// ============================================================
 // WEAPON DEFINITIONS
-
+// ============================================================
 const WEAPONS = {
   sword: {
     // Fast gap-closer. Good damage, moderate reach.
@@ -164,9 +164,9 @@ const WEAPONS = {
 
 const WEAPON_KEYS = Object.keys(WEAPONS);
 
-
+// ============================================================
 // HELPERS
-
+// ============================================================
 function randChoice(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function lerp(a, b, t)   { return a + (b - a) * t; }
 function clamp(v, mn, mx){ return Math.max(mn, Math.min(mx, v)); }
@@ -226,9 +226,9 @@ function spawnBullet(user, speed, color) {
   ));
 }
 
-
+// ============================================================
 // PROJECTILE
-
+// ============================================================
 class Projectile {
   constructor(x, y, vx, vy, owner, damage, color) {
     this.x = x; this.y = y;
@@ -280,9 +280,9 @@ class Projectile {
   }
 }
 
-
+// ============================================================
 // DAMAGE TEXT
-
+// ============================================================
 class DamageText {
   constructor(x, y, amount, color) {
     this.x = x; this.y = y;
@@ -307,9 +307,9 @@ class DamageText {
   }
 }
 
-
+// ============================================================
 // FIGHTER
-
+// ============================================================
 class Fighter {
   constructor(x, y, color, weaponKey, controls, isAI, aiDifficulty) {
     this.x = x; this.y = y;
@@ -882,9 +882,9 @@ class Fighter {
   }
 }
 
-
+// ============================================================
 // BACKGROUND GENERATION (pre-computed to avoid flicker)
-
+// ============================================================
 function generateBgElements() {
   bgStars = Array.from({ length: 110 }, () => ({
     x:       Math.random() * 900,
@@ -910,9 +910,9 @@ function generateBgElements() {
   }
 }
 
-
+// ============================================================
 // DRAWING
-
+// ============================================================
 function drawBackground() {
   const a = currentArena;
   const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -1012,9 +1012,9 @@ function drawPlatforms() {
   }
 }
 
-
+// ============================================================
 // DEATH / RESPAWN / WIN
-
+// ============================================================
 function checkDeaths() {
   for (const p of players) {
     if (p.health <= 0 && p.lives > 0 && p.invincible === 0) {
@@ -1076,9 +1076,9 @@ function resumeGame() {
   document.getElementById('pauseOverlay').style.display = 'none';
 }
 
-
+// ============================================================
 // HUD
-
+// ============================================================
 function updateHUD() {
   for (let i = 0; i < 2; i++) {
     const p  = players[i];
@@ -1101,9 +1101,9 @@ function updateHUD() {
   }
 }
 
-
+// ============================================================
 // GAME LOOP
-
+// ============================================================
 function gameLoop() {
   if (!gameRunning) return;
   if (paused) { requestAnimationFrame(gameLoop); return; }
@@ -1156,9 +1156,9 @@ function gameLoop() {
   requestAnimationFrame(gameLoop);
 }
 
-
+// ============================================================
 // INPUT
-
+// ============================================================
 const keysDown      = new Set();
 const keyHeldFrames = {};   // key → frames held continuously
 
@@ -1265,9 +1265,9 @@ function processInput() {
   });
 }
 
-
+// ============================================================
 // MENU UI HANDLERS
-
+// ============================================================
 function selectMode(mode) {
   gameMode = mode;
   document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('active'));
@@ -1295,9 +1295,9 @@ function getWeaponChoice(id) {
   return v === 'random' ? randChoice(WEAPON_KEYS) : v;
 }
 
-
+// ============================================================
 // START GAME
-
+// ============================================================
 function startGame() {
   document.getElementById('menu').style.display            = 'none';
   document.getElementById('gameOverOverlay').style.display  = 'none';
@@ -1353,9 +1353,9 @@ function startGame() {
   requestAnimationFrame(gameLoop);
 }
 
-
+// ============================================================
 // FULLSCREEN / RESIZE
-
+// ============================================================
 function resizeGame() {
   const hud    = document.getElementById('hud');
   const hudH   = (hud && hud.offsetHeight) || 0;
