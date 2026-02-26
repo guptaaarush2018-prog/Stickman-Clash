@@ -1,4 +1,6 @@
-/* STICKMAN CLASH — Full Theme */
+/* ============================================================
+   STICKMAN CLASH — Full Theme
+   ============================================================ */
 
 :root {
   --bg:       #07070f;
@@ -28,7 +30,9 @@ body {
   text-align: center;
 }
 
-/* Game wrapper */
+/* ============================================================
+   GAME WRAPPER — fullscreen container for HUD + canvas
+   ============================================================ */
 #gameWrapper {
   position: fixed;
   inset: 0;
@@ -39,7 +43,9 @@ body {
   z-index: 1;
 }
 
-/* Menu */
+/* ============================================================
+   MENU  (sits outside #gameWrapper so it can scroll)
+   ============================================================ */
 #menu {
   position: relative;
   z-index: 10;
@@ -53,10 +59,7 @@ body {
   animation: fadeIn 0.4s ease;
 }
 
-@keyframes fadeIn { 
-  from { opacity: 0; transform: translateY(-12px); } 
-  to { opacity: 1; transform: none; } 
-}
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
 
 .game-title {
   font-size: 3.4rem;
@@ -88,7 +91,9 @@ body {
   margin-bottom: 8px;
 }
 
-/* Mode cards */
+/* ============================================================
+   MODE CARDS
+   ============================================================ */
 .mode-cards {
   display: flex;
   gap: 14px;
@@ -123,7 +128,9 @@ body {
 .mode-name { font-weight: 800; font-size: 1rem; letter-spacing: 1px; margin-bottom: 4px; }
 .mode-desc { font-size: 0.72rem; color: var(--muted); }
 
-/* Arena cards */
+/* ============================================================
+   ARENA CARDS
+   ============================================================ */
 .arena-cards {
   display: flex;
   gap: 8px;
@@ -144,18 +151,12 @@ body {
   user-select: none;
 }
 
-.arena-card:hover { 
-  border-color: rgba(255,255,255,0.2); 
-  background: var(--bg3); 
-}
+.arena-card:hover { border-color: rgba(255,255,255,0.2); background: var(--bg3); }
+.arena-card.active { border-color: var(--gold); color: var(--gold); background: rgba(255,215,0,0.08); }
 
-.arena-card.active { 
-  border-color: var(--gold); 
-  color: var(--gold); 
-  background: rgba(255,215,0,0.08); 
-}
-
-/* Player config */
+/* ============================================================
+   PLAYER CONFIG
+   ============================================================ */
 .players-config {
   display: flex;
   gap: 20px;
@@ -207,7 +208,9 @@ body {
   white-space: nowrap;
 }
 
-/* Form controls */
+/* ============================================================
+   FORM CONTROLS
+   ============================================================ */
 select, input[type="color"], input[type="number"] {
   background: var(--bg3);
   border: 1.5px solid var(--border);
@@ -239,7 +242,9 @@ input[type="color"] {
   padding-top: 16px;
 }
 
-/* Start button */
+/* ============================================================
+   START BUTTON
+   ============================================================ */
 .btn {
   padding: 10px 22px;
   border: 2px solid var(--border);
@@ -289,14 +294,19 @@ input[type="color"] {
   background: var(--bg2);
 }
 
-/* Canvas */
+/* ============================================================
+   CANVAS  (JS sets width/height CSS; internal res stays 900×520)
+   ============================================================ */
 #gameCanvas {
   display: none;
   background: #111;
+  /* JS will set inline width/height/marginLeft */
   flex-shrink: 0;
 }
 
-/* HUD */
+/* ============================================================
+   HUD
+   ============================================================ */
 #hud {
   display: none;
   justify-content: space-between;
@@ -304,7 +314,7 @@ input[type="color"] {
   padding: 8px 16px 6px;
   background: rgba(7,7,15,0.92);
   border-bottom: 1px solid var(--border);
-  width: 100%;
+  width: 100%;        /* span the full viewport */
   flex-shrink: 0;
   gap: 10px;
 }
@@ -370,7 +380,9 @@ input[type="color"] {
   text-shadow: 0 1px 4px rgba(0,0,0,0.8);
 }
 
-/* Overlay screens */
+/* ============================================================
+   OVERLAYS (Pause / Game Over)
+   ============================================================ */
 .overlay-screen {
   display: none;
   position: fixed;
@@ -425,7 +437,9 @@ input[type="color"] {
   text-align: center;
 }
 
-/* Responsive */
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
 @media (max-width: 700px) {
   .game-title { font-size: 2.2rem; }
   #hud { flex-direction: column; align-items: stretch; }
