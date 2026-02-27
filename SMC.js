@@ -15,10 +15,19 @@ let chosenLives     = 3;
 let gameRunning     = false;
 let paused          = false;
 let players         = [];
-let projectiles     = [];
-let particles       = [];
-let damageTexts     = [];
+let projectiles        = [];
+let particles          = [];
+let damageTexts        = [];
+let respawnCountdowns  = [];  // { color, x, y, framesLeft }
 let screenShake     = 0;
+
+// Boss fight floor hazard state machine
+let bossFloorState = 'normal';  // 'normal' | 'warning' | 'hazard'
+let bossFloorType  = 'lava';    // 'lava' | 'void'
+let bossFloorTimer = 1500;      // frames until next state transition
+
+// User-configurable settings (toggled from menu)
+const settings = { particles: true, screenShake: true, dmgNumbers: true, landingDust: true };
 let frameCount      = 0;
 let currentArena    = null;  // the arena data object
 let currentArenaKey = 'grass';
@@ -26,6 +35,16 @@ let currentArenaKey = 'grass';
 // Pre-generated bg elements (so they don't flicker each frame)
 let bgStars     = [];
 let bgBuildings = [];
+
+// Arena order (used for menu background cycling)
+const ARENA_KEYS_ORDERED = ['grass', 'city', 'space', 'lava'];
+
+// Menu background cycling state
+let menuBgArenaIdx   = 0;
+let menuBgTimer      = 0;
+let menuBgFade       = 0;      // 0→1 fade to black, 1→2 fade from black
+let menuBgFrameCount = 0;
+let menuLoopRunning  = false;
 
 // ============================================================
 // ARENA DEFINITIONS
@@ -97,6 +116,24 @@ const ARENAS = {
       { x: 198, y: 238, w: 122, h: 15 }, // left high
       { x: 580, y: 238, w: 122, h: 15 }, // right high
     ]
+  },
+  creator: {
+    sky:         ['#050010', '#180030'],
+    groundColor: '#1a0028',
+    platColor:   '#3a0055',
+    platEdge:    '#9900ee',
+    hasLava:     false,
+    deathY:      640,
+    isBossArena: true,
+    platforms: [
+      { x: 0,   y: 460, w: 900, h: 60, isFloor: true, isFloorDisabled: false },
+      { x: 300, y: 270, w: 300, h: 18, ox: 300, oscX: 80,  oscSpeed: 0.013, oscPhase: 0.0 },
+      { x: 60,  y: 345, w: 150, h: 18, ox: 60,  oscX: 35,  oscSpeed: 0.019, oscPhase: 1.0 },
+      { x: 690, y: 345, w: 150, h: 18, ox: 690, oscX: 35,  oscSpeed: 0.019, oscPhase: 2.1 },
+      { x: 185, y: 220, w: 130, h: 18, oy: 220, oscY: 28,  oscSpeed: 0.022, oscPhase: 0.5 },
+      { x: 585, y: 220, w: 130, h: 18, oy: 220, oscY: 28,  oscSpeed: 0.022, oscPhase: 1.6 },
+      { x: 375, y: 155, w: 150, h: 18 },
+    ]
   }
 };
 
@@ -106,58 +143,58 @@ const ARENAS = {
 const WEAPONS = {
   sword: {
     // Fast gap-closer. Good damage, moderate reach.
-    name: 'Sword',   damage: 20, range: 72, cooldown: 20,
-    kb: 10,          abilityCooldown: 155, type: 'melee', color: '#cccccc',
+    name: 'Sword',   damage: 18, range: 74, cooldown: 18,
+    kb: 11,          abilityCooldown: 140, type: 'melee', color: '#cccccc',
     abilityName: 'Dash Slash',
     ability(user, target) {
-      user.vx = user.facing * 15;
-      if (dist(user, target) < 130) dealDamage(user, target, 34, 17);
+      user.vx = user.facing * 18;
+      if (dist(user, target) < 140) dealDamage(user, target, 36, 18);
     }
   },
   hammer: {
     // Devastating but very slow. Short range forces commitment.
-    name: 'Hammer',  damage: 26, range: 50, cooldown: 44,
-    kb: 18,          abilityCooldown: 225, type: 'melee', color: '#888888',
+    name: 'Hammer',  damage: 28, range: 54, cooldown: 40,
+    kb: 20,          abilityCooldown: 210, type: 'melee', color: '#888888',
     abilityName: 'Ground Slam',
     ability(user, target) {
-      screenShake = Math.max(screenShake, 28);
+      screenShake = Math.max(screenShake, 32);
       spawnRing(user.cx(), user.y + user.h);
-      if (dist(user, target) < 135) dealDamage(user, target, 30, 22);
+      if (dist(user, target) < 145) dealDamage(user, target, 34, 26);
     }
   },
   gun: {
-    // Light-damage ranged weapon. Rapid Fire burst is the win condition.
-    name: 'Gun',     damage: 14, range: 600, cooldown: 16,
-    kb: 6,           abilityCooldown: 120, type: 'ranged', color: '#666666',
+    // Ranged weapon. Rapid Fire burst is the win condition.
+    name: 'Gun',     damage: 16, range: 600, cooldown: 14,
+    kb: 7,           abilityCooldown: 110, type: 'ranged', color: '#666666',
     abilityName: 'Rapid Fire',
     ability(user, _target) {
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 8; i++) {
         setTimeout(() => {
           if (!gameRunning || user.health <= 0) return;
           spawnBullet(user, 14 + (Math.random()-0.5)*2, '#ffdd00');
-        }, i * 70);
+        }, i * 60);
       }
     }
   },
   axe: {
     // Balanced all-rounder. Spin ability covers both sides.
-    name: 'Axe',     damage: 22, range: 68, cooldown: 28,
-    kb: 13,          abilityCooldown: 155, type: 'melee', color: '#cc4422',
+    name: 'Axe',     damage: 22, range: 70, cooldown: 26,
+    kb: 14,          abilityCooldown: 150, type: 'melee', color: '#cc4422',
     abilityName: 'Spin Attack',
     ability(user, target) {
-      user.spinning = 26;
-      if (dist(user, target) < 115) dealDamage(user, target, 28, 16);
+      user.spinning = 30;
+      if (dist(user, target) < 120) dealDamage(user, target, 30, 18);
     }
   },
   spear: {
     // Longest reach, consistent damage. Rewards spacing.
-    name: 'Spear',   damage: 19, range: 96, cooldown: 22,
-    kb: 9,           abilityCooldown: 165, type: 'melee', color: '#8888ff',
+    name: 'Spear',   damage: 18, range: 105, cooldown: 20,
+    kb: 10,          abilityCooldown: 155, type: 'melee', color: '#8888ff',
     abilityName: 'Lunge',
     ability(user, target) {
-      user.vx = user.facing * 14;
-      user.vy = -5;
-      if (dist(user, target) < 145) dealDamage(user, target, 27, 13);
+      user.vx = user.facing * 16;
+      user.vy = -6;
+      if (dist(user, target) < 155) dealDamage(user, target, 30, 15);
     }
   }
 };
@@ -188,21 +225,31 @@ function dealDamage(attacker, target, dmg, kbForce) {
   const dir        = target.cx() > attacker.cx() ? 1 : -1;
   target.vx        = dir * actualKb;
   target.vy        = -actualKb * 0.55;
-  screenShake      = Math.max(screenShake, target.shielding ? 3 : 9);
+  if (settings.screenShake) screenShake = Math.max(screenShake, target.shielding ? 3 : 9);
   if (!target.shielding) {
     spawnParticles(target.cx(), target.cy(), target.color, 12);
-    // High knockback → ragdoll; moderate → stun only
-    if (actualKb >= 16) {
-      target.ragdollTimer = 30 + Math.floor(actualKb * 1.8);
-      target.stunTimer    = target.ragdollTimer + 20;
-    } else if (actualKb >= 8) {
-      target.stunTimer    = 22 + Math.floor(actualKb * 1.2);
+    // Chance-based stun / ragdoll (not guaranteed)
+    if (actualKb >= 16 && Math.random() < 0.70) {
+      target.ragdollTimer = 26 + Math.floor(actualKb * 1.6);
+      target.stunTimer    = target.ragdollTimer + 16;
+      // Assign angular momentum for ragdoll spin
+      target.ragdollSpin  = dir * (0.12 + Math.random() * 0.10);
+    } else if (actualKb >= 8 && Math.random() < 0.45) {
+      target.stunTimer    = 18 + Math.floor(actualKb * 1.1);
     }
   }
-  damageTexts.push(new DamageText(target.cx(), target.y, actualDmg, target.shielding ? '#88ddff' : '#ffdd00'));
+  // Super only charges for the attacker from dealing damage (independent per player)
+  const prev = attacker.superReady;
+  attacker.superMeter = Math.min(100, attacker.superMeter + Math.floor(actualDmg * 0.70));
+  if (!prev && attacker.superMeter >= 100) {
+    attacker.superReady      = true;
+    attacker.superFlashTimer = 90;
+  }
+  if (settings.dmgNumbers) damageTexts.push(new DamageText(target.cx(), target.y, actualDmg, target.shielding ? '#88ddff' : '#ffdd00'));
 }
 
 function spawnParticles(x, y, color, count) {
+  if (!settings.particles) return;
   for (let i = 0; i < count; i++) {
     const a = Math.random() * Math.PI * 2;
     const s = 1.5 + Math.random() * 5;
@@ -212,6 +259,7 @@ function spawnParticles(x, y, color, count) {
 }
 
 function spawnRing(x, y) {
+  if (!settings.particles) return;
   for (let i = 0; i < 18; i++) {
     const a = (i / 18) * Math.PI * 2;
     particles.push({ x, y, vx: Math.cos(a)*7, vy: Math.sin(a)*3.5,
@@ -327,7 +375,9 @@ class Fighter {
     this.kills       = 0;
     this.onGround    = false;
     this.cooldown    = 0;
-    this.abilityCooldown = 0;
+    this.cooldown2   = 0;
+    this.abilityCooldown  = 0;
+    this.abilityCooldown2 = 0;
     this.invincible  = 0;
     this.shielding   = false;
     this.spinning    = 0;
@@ -342,6 +392,13 @@ class Fighter {
     this.boostCooldown   = 0;  // dash / super-jump cooldown
     this.shieldCooldown  = 0;  // 30-s boost-shield cooldown
     this.shieldHoldTimer = 0;  // frames S is held this activation
+    this.canDoubleJump   = false; // allows one double-jump after leaving ground
+    this.superMeter      = 0;    // 0-100 super charge
+    this.superReady      = false; // true when super is fully charged
+    this.superFlashTimer = 0;    // countdown for "SUPER!" text above player
+    this.contactDamageCooldown = 0; // frames between passive weapon contact hits
+    this.ragdollAngle    = 0;    // accumulated spin angle during ragdoll
+    this.ragdollSpin     = 0;    // angular velocity (rad/frame) for ragdoll tumble
     this.animTimer    = 0;
     this.target       = null;
     this.aiState     = 'chase';
@@ -367,23 +424,43 @@ class Fighter {
     this.weaponHit       = false;
     this.boostCooldown   = 0;
     this.shieldHoldTimer = 0;
+    this.canDoubleJump   = false;
+    this.superMeter      = 0;
+    this.superReady      = false;
+    this.superFlashTimer = 0;
+    this.contactDamageCooldown = 0;
+    this.ragdollAngle    = 0;
+    this.ragdollSpin     = 0;
     this.invincible      = 100;
     spawnParticles(this.cx(), this.cy(), this.color, 22);
   }
 
   // ---- UPDATE ----
   update() {
-    if (this.cooldown > 0)        this.cooldown--;
-    if (this.abilityCooldown > 0) this.abilityCooldown--;
+    if (this.cooldown > 0)         this.cooldown--;
+    if (this.cooldown2 > 0)        this.cooldown2--;
+    if (this.abilityCooldown > 0)  this.abilityCooldown--;
+    if (this.abilityCooldown2 > 0) this.abilityCooldown2--;
     if (this.invincible > 0)      this.invincible--;
     if (this.attackTimer > 0)     this.attackTimer--;
     if (this.hurtTimer > 0)       this.hurtTimer--;
     if (this.stunTimer > 0)       this.stunTimer--;
     if (this.ragdollTimer > 0)    this.ragdollTimer--;
     if (this.spinning > 0)        this.spinning--;
-    if (this.boostCooldown > 0)   this.boostCooldown--;
-    if (this.shieldCooldown > 0)  this.shieldCooldown--;
+    if (this.boostCooldown > 0)        this.boostCooldown--;
+    if (this.shieldCooldown > 0)       this.shieldCooldown--;
+    if (this.contactDamageCooldown > 0) this.contactDamageCooldown--;
+    if (this.superFlashTimer > 0)      this.superFlashTimer--;
     this.animTimer++;
+
+    // ---- RAGDOLL SPIN PHYSICS ----
+    if (this.ragdollTimer > 0) {
+      this.ragdollAngle += this.ragdollSpin;
+      this.ragdollSpin  *= 0.97; // gradually decelerate spin
+    } else {
+      this.ragdollAngle = 0;
+      this.ragdollSpin  = 0;
+    }
 
     // ---- WEAPON TIP HITBOX (melee only) ----
     if (this.attackTimer > 0 && !this.weaponHit && this.weapon.type === 'melee' && this.target) {
@@ -409,6 +486,21 @@ class Fighter {
               break;
             }
           }
+        }
+      }
+    }
+
+    // ---- PASSIVE WEAPON CONTACT (melee only, while not mid-swing) ----
+    if (this.weapon.type === 'melee' && this.attackTimer === 0 &&
+        this.contactDamageCooldown === 0 && this.target) {
+      const tgt = this.target;
+      if (tgt.health > 0 && dist(this, tgt) < this.weapon.range * 0.62) {
+        const movingToward = (tgt.cx() > this.cx() && this.vx > 0.8) ||
+                             (tgt.cx() < this.cx() && this.vx < -0.8);
+        if (movingToward) {
+          dealDamage(this, tgt, Math.max(1, Math.floor(this.weapon.damage * 0.25)),
+                                Math.floor(this.weapon.kb * 0.35));
+          this.contactDamageCooldown = 32;
         }
       }
     }
@@ -443,6 +535,7 @@ class Fighter {
   }
 
   checkPlatform(pl) {
+    if (pl.isFloorDisabled) return;
     // Broad-phase: skip if no overlap at all
     if (this.x + this.w <= pl.x || this.x >= pl.x + pl.w ||
         this.y + this.h <= pl.y || this.y >= pl.y + pl.h) return;
@@ -457,9 +550,20 @@ class Fighter {
 
     if (minPen === dTop && this.vy >= 0) {
       // Fell onto top surface
-      this.y        = pl.y - this.h;
-      this.vy       = 0;
-      this.onGround = true;
+      const landVy = this.vy;
+      this.y           = pl.y - this.h;
+      this.vy          = 0;
+      this.onGround    = true;
+      this.canDoubleJump = false; // reset on landing; re-enabled by jumping
+      // Landing dust — harder landing = more particles
+      if (settings.landingDust && landVy > 4) {
+        spawnParticles(this.cx(), pl.y, 'rgba(200,200,200,0.9)', Math.min(14, Math.floor(landVy * 1.2)));
+      }
+      // Stop ragdoll spin on landing
+      if (this.ragdollTimer > 0 && landVy > 2) {
+        spawnParticles(this.cx(), pl.y, this.color, 10);
+        this.ragdollSpin = 0;
+      }
     } else if (minPen === dBottom && this.vy <= 0) {
       // Bumped head on underside
       this.y  = pl.y + pl.h;
@@ -527,6 +631,54 @@ class Fighter {
     this.attackTimer     = this.attackDuration * 2;
   }
 
+  // Dedicated super / ultimate activation (separate button from Q)
+  useSuper(target) {
+    if (this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+    if (!this.superReady) return;
+    this.activateSuper(target);
+  }
+
+  activateSuper(target) {
+    this.superMeter  = 0;
+    this.superReady  = false;
+    screenShake      = Math.max(screenShake, 24);
+    spawnParticles(this.cx(), this.cy(), this.color,   36);
+    spawnParticles(this.cx(), this.cy(), '#ffffff',    18);
+    spawnParticles(this.cx(), this.cy(), '#ffd700',    12);
+    this.attackTimer = this.attackDuration * 3;
+    this.weaponHit   = false;
+    const superMoves = {
+      sword:  () => {
+        this.vx = this.facing * 24;
+        if (dist(this, target) < 210) dealDamage(this, target, 60, 30);
+      },
+      hammer: () => {
+        screenShake = Math.max(screenShake, 48);
+        spawnRing(this.cx(), this.y + this.h);
+        spawnRing(this.cx(), this.y + this.h);
+        if (dist(this, target) < 230) dealDamage(this, target, 58, 38);
+      },
+      gun: () => {
+        for (let i = 0; i < 14; i++) {
+          setTimeout(() => {
+            if (!gameRunning || this.health <= 0) return;
+            spawnBullet(this, 14 + (Math.random() - 0.5) * 4, '#ff8800');
+          }, i * 50);
+        }
+      },
+      axe:   () => {
+        this.spinning = 75;
+        if (dist(this, target) < 175) dealDamage(this, target, 52, 26);
+      },
+      spear: () => {
+        this.vx = this.facing * 22;
+        this.vy = -10;
+        if (dist(this, target) < 230) dealDamage(this, target, 50, 24);
+      }
+    };
+    (superMoves[this.weaponKey] || superMoves.sword)();
+  }
+
   // ---- AI ----
 
   // Returns true if moving in 'dir' (±1) would walk the AI off a platform
@@ -536,12 +688,14 @@ class Fighter {
     const lookX = dir > 0 ? this.x + this.w + 36 : this.x - 36;
     const footY = this.y + this.h;
     for (const pl of currentArena.platforms) {
+      if (pl.isFloorDisabled) continue;
       if (lookX > pl.x && lookX < pl.x + pl.w &&
           footY <= pl.y + 22 && footY >= pl.y - 8) return false; // ground ahead
     }
-    // No ground found — but only dangerous if we'd fall toward death/lava
-    const dangerY = currentArena.hasLava ? currentArena.lavaY - 40 : canvas.height + 60;
-    return this.y + this.h < dangerY;
+    // On lava map stepping off any platform is immediately fatal — always dangerous
+    if (currentArena.hasLava) return true;
+    // Normal maps: only flag as dangerous close to the kill boundary
+    return this.y + this.h < canvas.height + 40;
   }
 
   // Finds any reachable platform above (for jumping pathing).
@@ -567,10 +721,27 @@ class Fighter {
     const abiFreq = this.aiDiff === 'easy' ? 0.004 : this.aiDiff === 'medium' ? 0.012 : 0.024;
 
     // ---- DANGER: near lava / death zone ----
-    if (currentArena.hasLava && this.y + this.h > currentArena.lavaY - 80 && this.onGround) {
-      this.vy = -18;
-      this.vx = this.cx() < canvas.width / 2 ? spd * 1.8 : -spd * 1.8;
-      return;
+    if (currentArena.hasLava) {
+      const distToLava = currentArena.lavaY - (this.y + this.h);
+      if (distToLava < 130) {
+        if (this.onGround && distToLava < 85) {
+          // Standing close to lava → jump hard toward safer half of map
+          this.vy = -19;
+          this.vx = this.cx() < canvas.width / 2 ? spd * 2.2 : -spd * 2.2;
+        } else if (!this.onGround && distToLava < 110) {
+          // Falling toward lava → steer toward nearest platform above
+          let nearestX = canvas.width / 2;
+          let nearestDist = Infinity;
+          for (const pl of currentArena.platforms) {
+            if (pl.y < this.y) {
+              const dx = Math.abs(pl.x + pl.w / 2 - this.cx());
+              if (dx < nearestDist) { nearestDist = dx; nearestX = pl.x + pl.w / 2; }
+            }
+          }
+          this.vx = nearestX > this.cx() ? spd * 2.2 : -spd * 2.2;
+        }
+        return;
+      }
     }
 
     // ---- STATE MACHINE ----
@@ -578,9 +749,11 @@ class Fighter {
     else if (d < this.weapon.range + 20) this.aiState = 'attack';
     else                                  this.aiState = 'chase';
 
-    // React to incoming attack (medium+): raise shield
-    if (this.aiDiff !== 'easy' && t.attackTimer > 0 && d < 110 && Math.random() < 0.22) {
+    // React to incoming attack (medium+): raise shield — respects cooldown
+    if (this.aiDiff !== 'easy' && t.attackTimer > 0 && d < 110 &&
+        this.shieldCooldown === 0 && Math.random() < 0.22) {
       this.shielding = true;
+      this.shieldCooldown = SHIELD_CD;
       setTimeout(() => { this.shielding = false; }, 320);
     }
 
@@ -597,8 +770,9 @@ class Fighter {
           this.vx = 0;
           if (this.onGround && this.platformAbove() && Math.random() < 0.05) this.vy = -17;
         }
-        // Jump to chase target that is on a higher platform
-        if (this.onGround && t.y + t.h < this.y - 50 && Math.random() < 0.04 && !edgeDanger)
+        // Jump to chase target on a higher platform — extra conservative on lava
+        if (this.onGround && t.y + t.h < this.y - 50 && Math.random() < 0.04 &&
+            !edgeDanger && (!currentArena.hasLava || this.platformAbove()))
           this.vy = -17;
         break;
 
@@ -606,6 +780,7 @@ class Fighter {
         this.vx *= 0.72;
         if (Math.random() < atkFreq) this.attack(t);
         if (Math.random() < abiFreq) this.ability(t);
+        if (this.superReady && Math.random() < 0.06) this.useSuper(t);
         // Small hop to stay on target's level
         if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.02)
           this.vy = -15;
@@ -657,12 +832,10 @@ class Fighter {
     const cx = this.cx();
     const ty = this.y;
 
-    // Ragdoll body rotation — spin around center of mass
+    // Ragdoll body rotation — use accumulated angular momentum
     if (this.ragdollTimer > 0) {
-      const spinAngle = Math.atan2(this.vy, this.vx) * 0.6
-                      + Math.sin(this.animTimer * 0.18) * 0.4;
       ctx.translate(cx, ty + this.h * 0.45);
-      ctx.rotate(spinAngle);
+      ctx.rotate(this.ragdollAngle);
       ctx.translate(-cx, -(ty + this.h * 0.45));
     }
     const f  = this.facing;
@@ -722,10 +895,10 @@ class Fighter {
     let rAng, lAng;
 
     if (s === 'ragdoll') {
-      // Chaotic flailing based on velocity direction
-      const flail = Math.sin(t * 0.38) * 1.9;
-      rAng = Math.atan2(this.vy, this.vx) + flail;
-      lAng = Math.atan2(this.vy, this.vx) + Math.PI - flail;
+      // Limbs trail behind the body's angular momentum
+      const flail = Math.sin(t * 0.38) * 1.4;
+      rAng = this.ragdollAngle * 1.2 + flail;
+      lAng = this.ragdollAngle * 1.2 + Math.PI - flail;
     } else if (s === 'stunned') {
       // Limp arms hanging
       rAng = Math.PI * 0.75 + Math.sin(t * 0.1) * 0.08;
@@ -762,15 +935,18 @@ class Fighter {
     ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(rEx, rEy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(lEx, lEy); ctx.stroke();
 
-    // WEAPON in hand
+    // WEAPON in right hand (+ left hand for boss)
     this.drawWeapon(rEx, rEy, rAng, s === 'attacking');
+    if (this.isBoss && this.weapon2Key) {
+      this.drawWeapon(lEx, lEy, lAng + Math.PI, s === 'attacking', this.weapon2Key);
+    }
 
     // LEGS
     let rLeg, lLeg;
     if (s === 'ragdoll') {
-      const legFlail = Math.sin(t * 0.35) * 1.2;
+      const legFlail = Math.sin(t * 0.35) * 1.1 + this.ragdollAngle * 0.8;
       rLeg = Math.PI * 0.5 + legFlail;
-      lLeg = Math.PI * 0.5 - legFlail;
+      lLeg = Math.PI * 0.5 - legFlail + this.ragdollAngle * 0.5;
     } else if (s === 'stunned') {
       rLeg = Math.PI * 0.6; lLeg = Math.PI * 0.4;
     } else if (s === 'jumping')      { rLeg = Math.PI*0.65; lLeg = Math.PI*0.35; }
@@ -811,6 +987,20 @@ class Fighter {
       ctx.restore();
     }
 
+    // SUPER READY flash
+    if (this.superFlashTimer > 0) {
+      const pulse = Math.abs(Math.sin(this.superFlashTimer * 0.18));
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, this.superFlashTimer / 20);
+      ctx.font        = `bold ${12 + Math.floor(pulse * 4)}px Arial`;
+      ctx.fillStyle   = '#ffd700';
+      ctx.textAlign   = 'center';
+      ctx.shadowColor = '#ff8800';
+      ctx.shadowBlur  = 10 + pulse * 8;
+      ctx.fillText('SUPER!', cx, ty - 20);
+      ctx.restore();
+    }
+
     // Name tag
     ctx.globalAlpha  = 1;
     ctx.font         = 'bold 10px Arial';
@@ -824,13 +1014,13 @@ class Fighter {
     ctx.restore();
   }
 
-  drawWeapon(hx, hy, angle, attacking) {
+  drawWeapon(hx, hy, angle, attacking, overrideKey = null) {
     ctx.save();
     ctx.translate(hx, hy);
     ctx.rotate(angle + (attacking ? 0.6 : 0));
     ctx.lineCap   = 'round';
 
-    const k = this.weaponKey;
+    const k = overrideKey || this.weaponKey;
 
     if (k === 'sword') {
       ctx.strokeStyle = '#cccccc';
@@ -883,6 +1073,159 @@ class Fighter {
 }
 
 // ============================================================
+// BOSS  (special Fighter — 3× HP, 2 weapons, ½ cooldowns)
+// ============================================================
+class Boss extends Fighter {
+  constructor() {
+    const noCtrl = { left:null, right:null, jump:null, attack:null, ability:null, super:null };
+    super(450, 200, '#cc00ee', 'axe', noCtrl, true, 'hard');
+    this.name          = 'CREATOR';
+    this.health        = 300;
+    this.maxHealth     = 300;
+    this.w             = 28;
+    this.h             = 70;
+    this.isBoss        = true;
+    this.lives         = 1;
+    this.spawnX        = 450;
+    this.spawnY        = 200;
+    this.playerNum     = 2;
+    // Second weapon (ranged complement)
+    this.baseWeaponKey = 'axe';
+    this.weapon2Key    = 'gun';
+    this.weapon2       = WEAPONS['gun'];
+    this.useWeapon2    = false;  // alternates each attack
+  }
+
+  getPhase() {
+    if (this.health > 200) return 1;
+    if (this.health > 100) return 2;
+    return 3;
+  }
+
+  // Override attack: alternates weapons, half cooldowns
+  attack(target) {
+    const usingW2 = this.useWeapon2;
+    const w       = usingW2 ? this.weapon2 : WEAPONS[this.baseWeaponKey];
+    const wKey    = usingW2 ? this.weapon2Key : this.baseWeaponKey;
+    const cd      = usingW2 ? this.cooldown2 : this.cooldown;
+    if (cd > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+
+    this.weapon    = w;
+    this.weaponKey = wKey;
+
+    if (w.type === 'melee') {
+      if (dist(this, target) < w.range * 1.4) this.weaponHit = false;
+    } else {
+      spawnBullet(this, 14, '#ff8800');
+    }
+
+    const halfCd = Math.max(1, Math.ceil(w.cooldown * 0.5));
+    if (usingW2) this.cooldown2 = halfCd;
+    else         this.cooldown  = halfCd;
+
+    this.attackTimer = this.attackDuration;
+    this.useWeapon2  = !this.useWeapon2;
+  }
+
+  // Override ability: half cooldown
+  ability(target) {
+    if (this.abilityCooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+    this.weapon.ability(this, target);
+    this.abilityCooldown = Math.max(1, Math.ceil(this.weapon.abilityCooldown * 0.5));
+    this.attackTimer     = this.attackDuration * 2;
+  }
+
+  // Override AI: phase-based, more aggressive, respects shield cooldown
+  updateAI() {
+    if (this.aiReact > 0) { this.aiReact--; return; }
+    if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
+
+    const phase   = this.getPhase();
+    const spd     = 3.8 + (3 - phase) * 0.5;
+    const atkFreq = 0.10 + (3 - phase) * 0.07;
+    const abiFreq = 0.016 + (3 - phase) * 0.010;
+
+    const t  = this.target;
+    if (!t || t.health <= 0) return;
+    const dx  = t.cx() - this.cx();
+    const d   = Math.abs(dx);
+    const dir = dx > 0 ? 1 : -1;
+
+    // Lava / void floor — flee toward elevated platforms
+    if (currentArena.hasLava) {
+      const distToLava = currentArena.lavaY - (this.y + this.h);
+      if (distToLava < 110) {
+        if (this.onGround) {
+          this.vy = -19; this.vx = this.cx() < canvas.width/2 ? spd*2.2 : -spd*2.2;
+        } else {
+          let nearX = canvas.width/2, nearDist = Infinity;
+          for (const pl of currentArena.platforms) {
+            if (pl.y < this.y && !pl.isFloorDisabled) {
+              const pdx = Math.abs(pl.x + pl.w/2 - this.cx());
+              if (pdx < nearDist) { nearDist = pdx; nearX = pl.x + pl.w/2; }
+            }
+          }
+          this.vx = nearX > this.cx() ? spd*2 : -spd*2;
+        }
+        return;
+      }
+    }
+
+    // Flee floor during void warning/hazard
+    const floorDanger = currentArena.isBossArena &&
+      (bossFloorState === 'hazard' || (bossFloorState === 'warning' && bossFloorTimer < 90)) &&
+      this.y + this.h > 440;
+    if (floorDanger && this.onGround) {
+      const above = this.platformAbove();
+      if (above) { this.vy = -18; this.vx = (above.x + above.w/2 - this.cx()) > 0 ? spd*1.5 : -spd*1.5; }
+      return;
+    }
+
+    // State machine
+    if (d < this.weapon.range + 30) this.aiState = 'attack';
+    else if (this.health < 80 && d > 130 && Math.random() < 0.010) this.aiState = 'evade';
+    else this.aiState = 'chase';
+
+    // Reactive shield (respects cooldown)
+    if (t.attackTimer > 0 && d < 130 && this.shieldCooldown === 0 && Math.random() < 0.30) {
+      this.shielding = true;
+      this.shieldCooldown = Math.ceil(SHIELD_CD * 0.5);
+      setTimeout(() => { this.shielding = false; }, 300);
+    }
+
+    const edgeDanger = this.isEdgeDanger(dir);
+
+    switch (this.aiState) {
+      case 'chase':
+        if (!edgeDanger) this.vx = dir * spd;
+        else { this.vx = 0; if (this.onGround && this.platformAbove() && Math.random() < 0.06) this.vy = -17; }
+        if (this.onGround && t.y + t.h < this.y - 50 && !edgeDanger && Math.random() < 0.05) this.vy = -17;
+        break;
+      case 'attack':
+        this.vx *= 0.72;
+        if (Math.random() < atkFreq) this.attack(t);
+        if (Math.random() < abiFreq) this.ability(t);
+        if (this.superReady && Math.random() < 0.08) this.useSuper(t);
+        if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.03) this.vy = -15;
+        break;
+      case 'evade': {
+        const eDir  = -dir;
+        const eEdge = this.isEdgeDanger(eDir);
+        if (!eEdge) this.vx = eDir * spd;
+        else if (Math.random() < atkFreq) this.attack(t);
+        if (Math.random() < atkFreq * 0.4) this.attack(t);
+        break;
+      }
+    }
+
+    // Phase 3 bonus aggression
+    if (phase === 3 && this.onGround && !edgeDanger && Math.random() < 0.025) this.vy = -16;
+
+    if (Math.random() < 0.04) this.aiReact = 3;
+  }
+}
+
+// ============================================================
 // BACKGROUND GENERATION (pre-computed to avoid flicker)
 // ============================================================
 function generateBgElements() {
@@ -921,10 +1264,48 @@ function drawBackground() {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  if (currentArenaKey === 'space') drawStars();
-  if (currentArenaKey === 'grass') drawClouds();
-  if (currentArenaKey === 'lava')  drawLava();
-  if (currentArenaKey === 'city')  drawCityBuildings();
+  if (currentArenaKey === 'space')   drawStars();
+  if (currentArenaKey === 'grass')   drawClouds();
+  if (currentArenaKey === 'lava')    drawLava();
+  if (currentArenaKey === 'city')    drawCityBuildings();
+  if (currentArenaKey === 'creator') drawCreatorArena();
+}
+
+function drawCreatorArena() {
+  // Pulsing void portals in the background
+  for (let i = 0; i < 6; i++) {
+    const bx = (i * 160 + Math.sin(frameCount * 0.007 + i * 1.1) * 55) % 900;
+    const by = 80 + Math.sin(frameCount * 0.011 + i * 1.4) * 70;
+    const r  = 35 + Math.sin(frameCount * 0.019 + i) * 12;
+    const g  = ctx.createRadialGradient(bx, by, 0, bx, by, r);
+    g.addColorStop(0, 'rgba(200,0,255,0.14)');
+    g.addColorStop(1, 'rgba(80,0,140,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // Draw lava on floor if active hazard
+  if (bossFloorState === 'hazard' && bossFloorType === 'lava') {
+    const ly = 460;
+    const lg = ctx.createLinearGradient(0, ly, 0, canvas.height);
+    lg.addColorStop(0,   '#ff6600');
+    lg.addColorStop(0.3, '#cc2200');
+    lg.addColorStop(1,   '#880000');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(0, ly);
+    for (let x = 0; x <= canvas.width; x += 18) {
+      ctx.lineTo(x, ly + Math.sin(x * 0.055 + frameCount * 0.07) * 7);
+    }
+    ctx.lineTo(canvas.width, canvas.height);
+    ctx.lineTo(0, canvas.height);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowColor = '#ff4400';
+    ctx.shadowBlur  = 20;
+    ctx.fillStyle   = 'rgba(255,80,0,0.22)';
+    ctx.fillRect(0, ly - 10, canvas.width, 12);
+    ctx.shadowBlur  = 0;
+  }
 }
 
 function drawStars() {
@@ -1022,6 +1403,7 @@ function checkDeaths() {
       p.invincible = 999; // block re-trigger until respawn clears it
       addKillFeed(p);
       if (p.lives > 0) {
+        respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
         setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
       } else {
         setTimeout(endGame, 900);
@@ -1058,11 +1440,16 @@ function endGame() {
 function backToMenu() {
   gameRunning = false;
   paused      = false;
-  canvas.style.display = 'none';
-  document.getElementById('hud').style.display           = 'none';
-  document.getElementById('pauseOverlay').style.display   = 'none';
+  canvas.style.display = 'block'; // keep visible as animated menu background
+  document.getElementById('hud').style.display            = 'none';
+  document.getElementById('pauseOverlay').style.display    = 'none';
   document.getElementById('gameOverOverlay').style.display = 'none';
-  document.getElementById('menu').style.display           = 'flex';
+  document.getElementById('menu').style.display            = 'flex';
+  resizeGame();
+  if (!menuLoopRunning) {
+    menuLoopRunning = true;
+    requestAnimationFrame(menuBgLoop);
+  }
 }
 
 function pauseGame() {
@@ -1081,16 +1468,18 @@ function resumeGame() {
 // ============================================================
 function updateHUD() {
   for (let i = 0; i < 2; i++) {
-    const p  = players[i];
+    const p = players[i];
     if (!p) continue;
-    const pct    = Math.max(0, p.health / p.maxHealth * 100);
-    const hEl    = document.getElementById(`p${i+1}Health`);
-    const lEl    = document.getElementById(`p${i+1}Lives`);
-    const nEl    = document.getElementById(`p${i+1}HudName`);
+    const n  = i + 1;
+    const pct = Math.max(0, p.health / p.maxHealth * 100);
+    const hEl  = document.getElementById(`p${n}Health`);
+    const lEl  = document.getElementById(`p${n}Lives`);
+    const nEl  = document.getElementById(`p${n}HudName`);
+    const sEl  = document.getElementById(`p${n}Super`);
+    const cdEl = document.getElementById(`p${n}CdBar`);
     if (hEl) {
       hEl.style.width      = pct + '%';
-      const hue            = pct * 1.2;
-      hEl.style.background = `hsl(${hue},100%,44%)`;
+      hEl.style.background = `hsl(${pct * 1.2},100%,44%)`;
     }
     if (lEl) {
       const full  = '❤'.repeat(Math.max(0, p.lives));
@@ -1098,7 +1487,90 @@ function updateHUD() {
       lEl.innerHTML = full + empty;
     }
     if (nEl) nEl.style.color = p.color;
+    if (sEl) {
+      sEl.style.width = p.superMeter + '%';
+      if (p.superReady) sEl.classList.add('ready');
+      else              sEl.classList.remove('ready');
+    }
+    if (cdEl) {
+      // Show how much of the Q cooldown has recovered (full = ready)
+      const maxCd = p.weapon.abilityCooldown;
+      const cdPct = maxCd > 0
+        ? Math.max(0, 100 - (p.abilityCooldown / maxCd) * 100)
+        : 100;
+      cdEl.style.width = cdPct + '%';
+    }
+    const shEl = document.getElementById(`p${n}ShieldBar`);
+    if (shEl) {
+      const shPct = p.shieldCooldown > 0
+        ? Math.max(0, 100 - (p.shieldCooldown / 1800) * 100)
+        : 100;
+      shEl.style.width = shPct + '%';
+      shEl.style.background = p.shieldCooldown > 0
+        ? 'linear-gradient(90deg, #4488ff, #88ccff)'
+        : 'linear-gradient(90deg, #44ddff, #ffffff)';
+    }
+    const wEl = document.getElementById(`p${n}WeaponHud`);
+    if (wEl) wEl.textContent = p.weapon.name;
   }
+}
+
+// ============================================================
+// MENU BACKGROUND LOOP  (animated arena showcase behind the menu)
+// ============================================================
+function menuBgLoop() {
+  if (!menuLoopRunning) return;
+
+  menuBgTimer++;
+  menuBgFrameCount++;
+
+  // Cycle to next arena every ~5 seconds (300 frames)
+  if (menuBgTimer >= 300 && menuBgFade === 0) {
+    menuBgFade  = 0.01;
+    menuBgTimer = 0;
+  }
+  if (menuBgFade > 0) {
+    menuBgFade = Math.min(2, menuBgFade + 0.028);
+    if (menuBgFade >= 1 && menuBgFade < 1.03) {
+      // Peak darkness: switch to next arena
+      menuBgArenaIdx = (menuBgArenaIdx + 1) % ARENA_KEYS_ORDERED.length;
+    }
+    if (menuBgFade >= 2) menuBgFade = 0;
+  }
+
+  // Temporarily borrow arena + frame state for the background draw
+  const savedKey   = currentArenaKey;
+  const savedArena = currentArena;
+  const savedFrame = frameCount;
+  currentArenaKey  = ARENA_KEYS_ORDERED[menuBgArenaIdx];
+  currentArena     = ARENAS[currentArenaKey];
+  frameCount       = menuBgFrameCount;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  drawBackground();
+
+  // Semi-transparent dark overlay so menu text stays readable
+  ctx.save();
+  ctx.fillStyle = 'rgba(7,7,15,0.55)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  // Cross-fade overlay during arena transitions
+  if (menuBgFade > 0) {
+    const fadeA = menuBgFade <= 1 ? menuBgFade : 2 - menuBgFade;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, Math.max(0, fadeA));
+    ctx.fillStyle   = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+
+  // Restore game state
+  currentArenaKey = savedKey;
+  currentArena    = savedArena;
+  frameCount      = savedFrame;
+
+  requestAnimationFrame(menuBgLoop);
 }
 
 // ============================================================
@@ -1147,6 +1619,24 @@ function gameLoop() {
   damageTexts.forEach(d => { d.update(); d.draw(); });
   damageTexts = damageTexts.filter(d => d.life > 0);
 
+  // Respawn countdowns
+  for (const cd of respawnCountdowns) {
+    cd.framesLeft--;
+    if (cd.framesLeft <= 0) continue;
+    const num = Math.ceil(cd.framesLeft / 22);
+    const a   = Math.min(1, cd.framesLeft / 18) * (1 - Math.max(0, (22 - cd.framesLeft % 22) / 22) * 0.3);
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, a);
+    ctx.font        = 'bold 32px Arial';
+    ctx.fillStyle   = cd.color;
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.9)';
+    ctx.shadowBlur  = 8;
+    ctx.fillText(num, cd.x, cd.y);
+    ctx.restore();
+  }
+  respawnCountdowns = respawnCountdowns.filter(cd => cd.framesLeft > 0);
+
   screenShake *= 0.84;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
@@ -1162,7 +1652,7 @@ function gameLoop() {
 const keysDown      = new Set();
 const keyHeldFrames = {};   // key → frames held continuously
 
-const SCROLL_BLOCK = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 's', 'S']);
+const SCROLL_BLOCK = new Set([' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 's', 'S', '/']);
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') { pauseGame(); return; }
@@ -1178,6 +1668,7 @@ document.addEventListener('keydown', e => {
     const incapacitated = p.ragdollTimer > 0 || p.stunTimer > 0;
     if (!incapacitated && e.key === p.controls.attack)  { e.preventDefault(); p.attack(other); }
     if (!incapacitated && e.key === p.controls.ability) { e.preventDefault(); p.ability(other); }
+    if (!incapacitated && p.controls.super && e.key === p.controls.super) { e.preventDefault(); p.useSuper(other); }
   });
 });
 
@@ -1212,20 +1703,29 @@ function processInput() {
     if (keysDown.has(p.controls.left))  p.vx = -spd;
     if (keysDown.has(p.controls.right)) p.vx =  spd;
 
-    // --- Jump (single press, on keydown; here handle hold for super-jump) ---
-    if (keysDown.has(p.controls.jump) && p.onGround) {
-      // First press: handled in keydown event. Here only the BOOST threshold.
-      if (wHeld === 1) {
-        // Normal jump on first frame
+    // --- Jump (ground jump + double jump) ---
+    if (wHeld === 1) {
+      if (p.onGround) {
+        // Ground jump
         p.vy = -16;
+        p.canDoubleJump = true; // enable one double-jump after leaving ground
         spawnParticles(p.cx(), p.y + p.h, '#ffffff', 5);
-      } else if (wHeld === BOOST_HOLD && p.boostCooldown === 0) {
-        // Hold → super jump
-        p.vy = BOOST_VY;
-        p.boostCooldown = BOOST_CD;
-        spawnParticles(p.cx(), p.y + p.h, '#00d4ff', 12);
-        spawnParticles(p.cx(), p.cy(),    '#ffffff',  5);
+      } else if (p.canDoubleJump) {
+        // Double jump in air
+        p.vy = -13;
+        p.canDoubleJump = false;
+        spawnParticles(p.cx(), p.cy(), p.color,  8);
+        spawnParticles(p.cx(), p.cy(), '#ffffff', 5);
       }
+    }
+    // Hold jump for super jump (ground only)
+    if (keysDown.has(p.controls.jump) && p.onGround &&
+        wHeld === BOOST_HOLD && p.boostCooldown === 0) {
+      p.vy = BOOST_VY;
+      p.boostCooldown = BOOST_CD;
+      p.canDoubleJump = true;
+      spawnParticles(p.cx(), p.y + p.h, '#00d4ff', 12);
+      spawnParticles(p.cx(), p.cy(),    '#ffffff',  5);
     }
 
     // --- Directional boost (hold threshold) ---
@@ -1274,7 +1774,7 @@ function selectMode(mode) {
   document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
   const isBot = mode === 'bot';
   document.getElementById('p2Title').textContent          = isBot ? 'BOT' : 'Player 2';
-  document.getElementById('p2Hint').textContent           = isBot ? 'AI Controlled' : '←→↑↓ · Enter · .';
+  document.getElementById('p2Hint').textContent           = isBot ? 'AI Controlled' : '← → ↑ · Enter · . · /';
   document.getElementById('difficultyRow').style.display  = isBot ? 'flex' : 'none';
 }
 
@@ -1320,21 +1820,23 @@ function startGame() {
   // Generate bg elements fresh each game
   generateBgElements();
 
-  // Reset state
-  projectiles  = [];
-  particles    = [];
-  damageTexts  = [];
-  screenShake  = 0;
-  frameCount   = 0;
-  paused       = false;
+  // Reset state — stop menu background loop
+  menuLoopRunning    = false;
+  projectiles        = [];
+  particles          = [];
+  damageTexts        = [];
+  respawnCountdowns  = [];
+  screenShake     = 0;
+  frameCount      = 0;
+  paused          = false;
 
   // Player 1  (W/A/D move+boost · S=shield · Space=attack · Q=ability)
-  const p1 = new Fighter(160, 300, c1, w1, { left:'a', right:'d', jump:'w', attack:' ', shield:'s', ability:'q' }, false);
+  const p1 = new Fighter(160, 300, c1, w1, { left:'a', right:'d', jump:'w', attack:' ', shield:'s', ability:'q', super:'e' }, false);
   p1.playerNum = 1; p1.name = 'P1'; p1.lives = chosenLives;
   p1.spawnX = 160; p1.spawnY = 300;
 
   // Player 2 / Bot  (←→↑ move+boost · ↓=shield · Enter=attack · .=ability)
-  const p2 = new Fighter(720, 300, c2, w2, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'.' }, isBot, diff);
+  const p2 = new Fighter(720, 300, c2, w2, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'.', super:'/' }, isBot, diff);
   p2.playerNum = 2; p2.name = isBot ? 'BOT' : 'P2'; p2.lives = chosenLives;
   p2.spawnX = 720; p2.spawnY = 300;
 
@@ -1374,3 +1876,14 @@ function resizeGame() {
 }
 
 window.addEventListener('resize', resizeGame);
+
+// ============================================================
+// PAGE LOAD — start menu background animation immediately
+// ============================================================
+currentArenaKey = ARENA_KEYS_ORDERED[menuBgArenaIdx];
+currentArena    = ARENAS[currentArenaKey];
+generateBgElements();
+canvas.style.display = 'block';
+resizeGame();
+menuLoopRunning = true;
+requestAnimationFrame(menuBgLoop);
