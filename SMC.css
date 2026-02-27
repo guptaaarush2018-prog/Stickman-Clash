@@ -57,21 +57,29 @@ body {
   min-height: 100vh;
   overflow-y: auto;
   animation: fadeIn 0.4s ease;
+  /* slight dark vignette so cards sit against the animated arena bg */
+  background: radial-gradient(ellipse at 50% 30%, rgba(7,7,15,0.05) 0%, rgba(7,7,15,0.30) 100%);
 }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
 
 .game-title {
-  font-size: 3.4rem;
+  font-size: 4.4rem;
   font-weight: 900;
-  letter-spacing: 4px;
+  letter-spacing: 6px;
   text-transform: uppercase;
-  background: linear-gradient(135deg, var(--p1) 0%, var(--accent) 50%, var(--p2) 100%);
+  background: linear-gradient(135deg, #ff6600 0%, #ff9900 50%, #ffdd00 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 0 24px rgba(0, 212, 255, 0.35));
+  filter: drop-shadow(0 0 36px rgba(255,120,0,0.65)) drop-shadow(0 0 14px rgba(255,200,0,0.45));
   line-height: 1;
+  animation: titleGlow 3s ease-in-out infinite;
+}
+
+@keyframes titleGlow {
+  0%, 100% { filter: drop-shadow(0 0 36px rgba(255,120,0,0.65)) drop-shadow(0 0 14px rgba(255,200,0,0.45)); }
+  50%       { filter: drop-shadow(0 0 70px rgba(255,160,0,0.95)) drop-shadow(0 0 30px rgba(255,220,0,0.80)); }
 }
 
 .game-subtitle {
@@ -270,18 +278,69 @@ input[type="color"] {
   padding: 14px 48px;
   font-size: 1.05rem;
   letter-spacing: 3px;
-  background: linear-gradient(135deg, var(--p1), var(--accent));
+  background: linear-gradient(135deg, #00bb44, #00ee66);
   border: none;
   color: #fff;
   border-radius: 10px;
-  box-shadow: 0 4px 24px rgba(0, 212, 255, 0.3);
+  box-shadow: 0 4px 24px rgba(0, 200, 70, 0.4);
 }
 
 .btn-start:hover {
   transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 6px 30px rgba(0, 212, 255, 0.45);
-  background: linear-gradient(135deg, #22e4ff, #9b59f5);
+  box-shadow: 0 6px 32px rgba(0, 220, 80, 0.6);
+  background: linear-gradient(135deg, #00dd55, #44ff88);
   border: none;
+}
+
+/* ============================================================
+   SETTINGS PANEL
+   ============================================================ */
+.settings-section {
+  width: 100%;
+  max-width: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-toggle {
+  font-size: 0.78rem;
+  padding: 7px 18px;
+  letter-spacing: 1.5px;
+}
+
+.settings-panel {
+  display: none;
+  background: var(--bg2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 22px;
+  width: 100%;
+}
+
+.settings-grid {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.setting-item input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--p1);
+  cursor: pointer;
 }
 
 .controls-info {
@@ -331,10 +390,27 @@ input[type="color"] {
   align-items: flex-end;
 }
 
+.hud-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.hud-side.right .hud-name-row {
+  flex-direction: row-reverse;
+}
+
 .hud-name {
   font-size: 0.7rem;
   font-weight: 800;
   letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.hud-weapon {
+  font-size: 0.58rem;
+  color: var(--muted);
+  letter-spacing: 1px;
   text-transform: uppercase;
 }
 
@@ -357,6 +433,69 @@ input[type="color"] {
 .lives-display {
   font-size: 0.85rem;
   letter-spacing: 1px;
+}
+
+/* ============================================================
+   SUPER BAR + COOLDOWN BAR
+   ============================================================ */
+.super-bar-wrap, .cd-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+}
+
+.super-label {
+  font-size: 0.52rem;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--gold);
+  min-width: 32px;
+  text-transform: uppercase;
+}
+
+.cd-label {
+  font-size: 0.60rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--accent);
+  min-width: 12px;
+}
+
+.super-bar-track, .cd-bar-track {
+  flex: 1;
+  height: 5px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.super-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #ffd700, #ff8800);
+  border-radius: 4px;
+  transition: width 0.12s ease;
+}
+
+.super-bar-fill.ready {
+  width: 100% !important;
+  background: linear-gradient(90deg, #ffd700, #ffffff, #ffd700);
+  animation: superPulse 0.5s ease-in-out infinite;
+}
+
+@keyframes superPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+.cd-bar-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--p1));
+  border-radius: 4px;
+  transition: width 0.08s ease;
 }
 
 .hud-center {
