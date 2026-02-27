@@ -29,6 +29,11 @@
         <div class="mode-name">Vs Bot</div>
         <div class="mode-desc">Fight an AI opponent</div>
       </div>
+      <div class="mode-card" data-mode="boss" onclick="selectMode('boss')">
+        <div class="mode-icon">💀</div>
+        <div class="mode-name">Boss Fight</div>
+        <div class="mode-desc">Battle the Creator</div>
+      </div>
     </div>
   </div>
 
@@ -77,7 +82,7 @@
         <label>Color</label>
         <input type="color" id="p2Color" value="#ff4455">
       </div>
-      <div class="config-row">
+      <div class="config-row" id="p2WeaponRow">
         <label>Weapon</label>
         <select id="p2Weapon">
           <option value="random">🎲 Random</option>
@@ -109,11 +114,36 @@
     </div>
   </div>
 
+  <!-- SETTINGS -->
+  <div class="settings-section">
+    <button class="btn settings-toggle" onclick="toggleSettings()">⚙ Settings</button>
+    <div id="settingsPanel" class="settings-panel">
+      <div class="settings-grid">
+        <label class="setting-item">
+          <input type="checkbox" id="settingParticles" checked onchange="updateSettings()">
+          <span>Particles</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="settingShake" checked onchange="updateSettings()">
+          <span>Screen Shake</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="settingDmgNums" checked onchange="updateSettings()">
+          <span>Damage Numbers</span>
+        </label>
+        <label class="setting-item">
+          <input type="checkbox" id="settingLandDust" checked onchange="updateSettings()">
+          <span>Landing Dust</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
   <button class="btn btn-start" onclick="startGame()">▶ START GAME</button>
 
   <div class="controls-info">
-    <div>P1: <strong>WASD</strong> move · <strong>hold A/D/W</strong> boost · <strong>S</strong> shield (30 s CD) · <strong>Space</strong> attack · <strong>Q</strong> ability</div>
-    <div>P2: <strong>Arrow Keys</strong> move · <strong>hold ←/→/↑</strong> boost · <strong>↓</strong> shield (30 s CD) · <strong>Enter</strong> attack · <strong>.</strong> ability</div>
+    <div>P1: <strong>WASD</strong> move · <strong>hold A/D/W</strong> boost · <strong>S</strong> shield (30 s CD) · <strong>Space</strong> attack · <strong>Q</strong> ability · <strong>E</strong> super</div>
+    <div>P2: <strong>Arrow Keys</strong> move · <strong>hold ←/→/↑</strong> boost · <strong>↓</strong> shield (30 s CD) · <strong>Enter</strong> attack · <strong>.</strong> ability · <strong>/</strong> super</div>
     <div><strong>Esc</strong> pause</div>
   </div>
 </div>
@@ -129,9 +159,24 @@
 <div id="hud">
   <!-- Player 1 side -->
   <div class="hud-side" id="hud-p1">
-    <div class="hud-name" id="p1HudName" style="color:#00d4ff">PLAYER 1</div>
+    <div class="hud-name-row">
+      <div class="hud-name" id="p1HudName" style="color:#00d4ff">PLAYER 1</div>
+      <div class="hud-weapon" id="p1WeaponHud">Sword</div>
+    </div>
     <div class="health-bar-wrap">
       <div class="health-bar" id="p1Health"></div>
+    </div>
+    <div class="super-bar-wrap">
+      <span class="super-label">SUPER</span>
+      <div class="super-bar-track"><div class="super-bar-fill" id="p1Super"></div></div>
+    </div>
+    <div class="cd-bar-wrap">
+      <span class="cd-label">Q</span>
+      <div class="cd-bar-track"><div class="cd-bar-fill" id="p1CdBar"></div></div>
+    </div>
+    <div class="cd-bar-wrap">
+      <span class="cd-label">S</span>
+      <div class="cd-bar-track"><div class="cd-bar-fill" id="p1ShieldBar"></div></div>
     </div>
     <div class="lives-display" id="p1Lives">❤❤❤</div>
   </div>
@@ -143,9 +188,24 @@
 
   <!-- Player 2 side -->
   <div class="hud-side right" id="hud-p2">
-    <div class="hud-name" id="p2HudName" style="color:#ff4455">PLAYER 2</div>
+    <div class="hud-name-row">
+      <div class="hud-weapon" id="p2WeaponHud">Sword</div>
+      <div class="hud-name" id="p2HudName" style="color:#ff4455">PLAYER 2</div>
+    </div>
     <div class="health-bar-wrap">
       <div class="health-bar" id="p2Health"></div>
+    </div>
+    <div class="super-bar-wrap">
+      <span class="super-label">SUPER</span>
+      <div class="super-bar-track"><div class="super-bar-fill" id="p2Super"></div></div>
+    </div>
+    <div class="cd-bar-wrap">
+      <span class="cd-label">Q</span>
+      <div class="cd-bar-track"><div class="cd-bar-fill" id="p2CdBar"></div></div>
+    </div>
+    <div class="cd-bar-wrap">
+      <span class="cd-label">S</span>
+      <div class="cd-bar-track"><div class="cd-bar-fill" id="p2ShieldBar"></div></div>
     </div>
     <div class="lives-display" id="p2Lives">❤❤❤</div>
   </div>
