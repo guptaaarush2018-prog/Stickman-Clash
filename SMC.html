@@ -9,144 +9,219 @@
 <body>
 
 <!-- ============================================================
-     MENU SCREEN
+     MENU SCREEN — 3-column grid layout
      ============================================================ -->
 <div id="menu">
-  <h1 class="game-title">STICKMAN CLASH</h1>
-  <p class="game-subtitle">Local Multiplayer Platform Fighter</p>
 
-  <!-- MODE SELECTION -->
-  <div>
-    <p class="section-label">Game Mode</p>
-    <div class="mode-cards">
-      <div class="mode-card active" data-mode="2p" onclick="selectMode('2p')">
-        <div class="mode-icon">👥</div>
-        <div class="mode-name">2 Player</div>
-        <div class="mode-desc">Two humans, same keyboard</div>
+  <!-- LEFT COLUMN: Player 1 config -->
+  <div class="menu-side left">
+    <div class="player-config expanded" id="p1Config">
+      <div class="config-header" onclick="toggleCard('p1Config')">
+        <h3>Player 1</h3>
+        <span class="expand-arrow">▾</span>
       </div>
-      <div class="mode-card" data-mode="bot" onclick="selectMode('bot')">
-        <div class="mode-icon">🤖</div>
-        <div class="mode-name">Vs Bot</div>
-        <div class="mode-desc">Fight an AI opponent</div>
-      </div>
-      <div class="mode-card" data-mode="boss" onclick="selectMode('boss')">
-        <div class="mode-icon">💀</div>
-        <div class="mode-name">Boss Fight</div>
-        <div class="mode-desc">Battle the Creator</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ARENA SELECTION -->
-  <div>
-    <p class="section-label">Arena</p>
-    <div class="arena-cards">
-      <div class="arena-card active" data-arena="grass"  onclick="selectArena('grass')">🌿 Grass</div>
-      <div class="arena-card"        data-arena="lava"   onclick="selectArena('lava')">🌋 Lava</div>
-      <div class="arena-card"        data-arena="space"  onclick="selectArena('space')">🌌 Space</div>
-      <div class="arena-card"        data-arena="city"   onclick="selectArena('city')">🏙 City</div>
-      <div class="arena-card"        data-arena="random" onclick="selectArena('random')">🎲 Random</div>
-    </div>
-  </div>
-
-  <!-- PLAYER CONFIG -->
-  <div class="players-config">
-    <!-- PLAYER 1 -->
-    <div class="player-config" id="p1Config">
-      <h3>Player 1</h3>
-      <p class="controls-hint">WASD · Space · Q · Shift</p>
-      <div class="config-row">
-        <label>Color</label>
-        <input type="color" id="p1Color" value="#00d4ff">
-      </div>
-      <div class="config-row">
-        <label>Weapon</label>
-        <select id="p1Weapon">
-          <option value="random">🎲 Random</option>
-          <option value="sword">⚔️ Sword</option>
-          <option value="hammer">🔨 Hammer</option>
-          <option value="gun">🔫 Gun</option>
-          <option value="axe">🪓 Axe</option>
-          <option value="spear">🗡️ Spear</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="vs-divider">VS</div>
-
-    <!-- PLAYER 2 / BOT -->
-    <div class="player-config" id="p2Config">
-      <h3 id="p2Title">Player 2</h3>
-      <p class="controls-hint" id="p2Hint">← → ↑ · Enter · . · /</p>
-      <div class="config-row" id="p2ColorRow">
-        <label>Color</label>
-        <input type="color" id="p2Color" value="#ff4455">
-      </div>
-      <div class="config-row" id="p2WeaponRow">
-        <label>Weapon</label>
-        <select id="p2Weapon">
-          <option value="random">🎲 Random</option>
-          <option value="sword">⚔️ Sword</option>
-          <option value="hammer">🔨 Hammer</option>
-          <option value="gun">🔫 Gun</option>
-          <option value="axe">🪓 Axe</option>
-          <option value="spear">🗡️ Spear</option>
-        </select>
-      </div>
-      <div class="config-row" id="difficultyRow" style="display:none">
-        <label>Difficulty</label>
-        <select id="difficulty">
-          <option value="easy">😌 Easy</option>
-          <option value="medium" selected>😐 Medium</option>
-          <option value="hard">😤 Hard</option>
-        </select>
+      <div class="config-body">
+        <p class="controls-hint">WASD move · Space attack · Q ability · E super · S shield</p>
+        <div class="config-row">
+          <label>Color</label>
+          <input type="color" id="p1Color" value="#00d4ff">
+        </div>
+        <div class="config-row">
+          <label>Weapon</label>
+          <select id="p1Weapon" onchange="showDesc('p1','weapon',this.value)">
+            <option value="random">🎲 Random</option>
+            <option value="sword">⚔️ Sword</option>
+            <option value="hammer">🔨 Hammer</option>
+            <option value="gun">🔫 Gun</option>
+            <option value="axe">🪓 Axe</option>
+            <option value="spear">🗡️ Spear</option>
+          </select>
+        </div>
+        <div class="config-row" id="p1ClassRow">
+          <label>Class</label>
+          <select id="p1Class" onchange="updateClassWeapon('p1')">
+            <option value="random">🎲 Random</option>
+            <option value="none">⚔️ None</option>
+            <option value="thor">⚡ Thor</option>
+            <option value="kratos">🪓 Kratos</option>
+            <option value="ninja">🗡️ Ninja</option>
+            <option value="gunner">🔫 Gunner</option>
+          </select>
+        </div>
+        <div class="selection-desc" id="p1Desc" style="display:none">
+          <div class="desc-title" id="p1DescTitle"></div>
+          <div class="desc-body"  id="p1DescBody"></div>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- LIVES SELECTION -->
-  <div>
-    <p class="section-label">Lives Per Player</p>
-    <div class="arena-cards">
-      <div class="arena-card" data-lives="1" onclick="selectLives(1)">1 Life</div>
-      <div class="arena-card active" data-lives="3" onclick="selectLives(3)">3 Lives</div>
-      <div class="arena-card" data-lives="5" onclick="selectLives(5)">5 Lives</div>
-    </div>
-  </div>
+  <!-- CENTER COLUMN: everything else -->
+  <div class="menu-center">
+    <h1 class="game-title">STICKMAN CLASH</h1>
+    <p class="game-subtitle">Local Multiplayer Platform Fighter</p>
 
-  <!-- SETTINGS -->
-  <div class="settings-section">
-    <button class="btn settings-toggle" onclick="toggleSettings()">⚙ Settings</button>
-    <div id="settingsPanel" class="settings-panel">
-      <div class="settings-grid">
-        <label class="setting-item">
-          <input type="checkbox" id="settingParticles" checked onchange="updateSettings()">
-          <span>Particles</span>
-        </label>
-        <label class="setting-item">
-          <input type="checkbox" id="settingShake" checked onchange="updateSettings()">
-          <span>Screen Shake</span>
-        </label>
-        <label class="setting-item">
-          <input type="checkbox" id="settingDmgNums" checked onchange="updateSettings()">
-          <span>Damage Numbers</span>
-        </label>
-        <label class="setting-item">
-          <input type="checkbox" id="settingLandDust" checked onchange="updateSettings()">
-          <span>Landing Dust</span>
-        </label>
+    <!-- MODE SELECTION -->
+    <div>
+      <p class="section-label">Game Mode</p>
+      <div class="mode-cards">
+        <div class="mode-card active" data-mode="2p" onclick="selectMode('2p')">
+          <div class="mode-icon">👥</div>
+          <div class="mode-name">2 Player</div>
+          <div class="mode-desc">Two humans, same keyboard</div>
+        </div>
+        <div class="mode-card" data-mode="bot" onclick="selectMode('bot')">
+          <div class="mode-icon">🤖</div>
+          <div class="mode-name">Vs Bot</div>
+          <div class="mode-desc">Fight an AI opponent</div>
+        </div>
+        <div class="mode-card" data-mode="boss" onclick="selectMode('boss')">
+          <div class="mode-icon">💀</div>
+          <div class="mode-name">Boss Fight</div>
+          <div class="mode-desc">Battle the Creator</div>
+        </div>
+        <div class="mode-card" data-mode="boss2p" onclick="selectMode('boss2p')">
+          <div class="mode-icon">👥💀</div>
+          <div class="mode-name">2P Boss</div>
+          <div class="mode-desc">Co-op vs the Creator</div>
+        </div>
+        <div class="mode-card" data-mode="training" onclick="selectMode('training')">
+          <div class="mode-icon">🎯</div>
+          <div class="mode-name">Training</div>
+          <div class="mode-desc">Practice with dummies</div>
+        </div>
       </div>
     </div>
-  </div>
 
-  <button class="btn btn-start" onclick="startGame()">▶ START GAME</button>
+    <!-- ARENA SELECTION -->
+    <div id="arenaSection">
+      <p class="section-label">Arena</p>
+      <div class="arena-cards">
+        <div class="arena-card active" data-arena="grass"  onclick="selectArena('grass')">🌿 Grass</div>
+        <div class="arena-card"        data-arena="lava"   onclick="selectArena('lava')">🌋 Lava</div>
+        <div class="arena-card"        data-arena="space"  onclick="selectArena('space')">🌌 Space</div>
+        <div class="arena-card"        data-arena="city"   onclick="selectArena('city')">🏙 City</div>
+        <div class="arena-card"        data-arena="random" onclick="selectArena('random')">🎲 Random</div>
+        <div class="arena-card" data-arena="forest" onclick="selectArena('forest')">🌲 Forest</div>
+        <div class="arena-card" data-arena="ice"    onclick="selectArena('ice')">❄️ Ice</div>
+        <div class="arena-card" data-arena="ruins"  onclick="selectArena('ruins')">🏛 Ruins</div>
+      </div>
+    </div>
 
-  <div class="controls-info">
-    <div>P1: <strong>WASD</strong> move · <strong>hold A/D/W</strong> boost · <strong>S</strong> shield (30 s CD) · <strong>Space</strong> attack · <strong>Q</strong> ability · <strong>E</strong> super</div>
-    <div>P2: <strong>Arrow Keys</strong> move · <strong>hold ←/→/↑</strong> boost · <strong>↓</strong> shield (30 s CD) · <strong>Enter</strong> attack · <strong>.</strong> ability · <strong>/</strong> super</div>
-    <div><strong>Esc</strong> pause</div>
-  </div>
-</div>
+    <!-- TRAINING PANEL (shown only in training mode) -->
+    <div id="trainingPanel" style="display:none">
+      <p class="section-label">Training Tools</p>
+      <div class="training-btns">
+        <button class="btn training-btn" onclick="trainingCmd('giveSuper')">⚡ Give Super</button>
+        <button class="btn training-btn" onclick="trainingCmd('noCooldowns')">🔄 No Cooldowns</button>
+        <button class="btn training-btn" onclick="trainingCmd('fullHealth')">❤ Full Health</button>
+        <button class="btn training-btn" onclick="trainingCmd('spawnDummy')">🎯 Spawn Dummy</button>
+        <button class="btn training-btn" onclick="trainingCmd('spawnBot')">🤖 Spawn Bot</button>
+        <button class="btn training-btn" onclick="trainingCmd('clearEnemies')">🗑 Clear All</button>
+        <button class="btn training-btn" onclick="trainingCmd('godmode')">🛡 Godmode</button>
+        <button class="btn training-btn" onclick="trainingCmd('spawnBoss')">💀 Spawn Boss</button>
+        <button class="btn training-btn" onclick="trainingCmd('onePunch')">👊 One Punch</button>
+      </div>
+    </div>
+
+    <!-- LIVES SELECTION -->
+    <div>
+      <p class="section-label">Lives Per Player</p>
+      <div class="arena-cards">
+        <div class="arena-card" data-lives="1" onclick="selectLives(1)">1 Life</div>
+        <div class="arena-card active" data-lives="3" onclick="selectLives(3)">3 Lives</div>
+        <div class="arena-card" data-lives="5" onclick="selectLives(5)">5 Lives</div>
+        <div class="arena-card" data-lives="10" onclick="selectLives(10)">10 Lives</div>
+        <div class="arena-card" id="infiniteOption" data-lives="0" onclick="selectLives(0)">∞ Infinite</div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="settings-section">
+      <button class="btn settings-toggle" onclick="toggleSettings()">⚙ Settings</button>
+      <div id="settingsPanel" class="settings-panel">
+        <div class="settings-grid">
+          <label class="setting-item">
+            <input type="checkbox" id="settingParticles" checked onchange="updateSettings()">
+            <span>Particles</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" id="settingShake" checked onchange="updateSettings()">
+            <span>Screen Shake</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" id="settingDmgNums" checked onchange="updateSettings()">
+            <span>Damage Numbers</span>
+          </label>
+          <label class="setting-item">
+            <input type="checkbox" id="settingLandDust" checked onchange="updateSettings()">
+            <span>Landing Dust</span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-start" onclick="startGame()">▶ START GAME</button>
+
+    <div class="controls-info">
+      <div>🎮 <strong>P1:</strong> <strong>A/D</strong> move · <strong>W</strong> jump · <strong>hold A/D/W</strong> dash/boost · <strong>S</strong> shield · <strong>Space</strong> attack · <strong>Q</strong> ability · <strong>E</strong> super</div>
+      <div>🎮 <strong>P2:</strong> <strong>←/→</strong> move · <strong>↑</strong> jump · <strong>hold ←/→/↑</strong> dash/boost · <strong>↓</strong> shield · <strong>Enter</strong> attack · <strong>.</strong> ability · <strong>/</strong> super</div>
+      <div>⏸ <strong>Esc</strong> = pause &nbsp;|&nbsp; Double-tap jump for double jump &nbsp;|&nbsp; Shield has 30 s cooldown</div>
+    </div>
+  </div><!-- /.menu-center -->
+
+  <!-- RIGHT COLUMN: Player 2 / Bot config -->
+  <div class="menu-side right">
+    <div class="player-config expanded" id="p2Config">
+      <div class="config-header" onclick="toggleCard('p2Config')">
+        <h3 id="p2Title">Player 2</h3>
+        <span class="expand-arrow">▾</span>
+      </div>
+      <div class="config-body">
+        <p class="controls-hint" id="p2Hint">← → ↑ · Enter · . · /</p>
+        <div class="config-row" id="p2ColorRow">
+          <label>Color</label>
+          <input type="color" id="p2Color" value="#ff4455">
+        </div>
+        <div class="config-row" id="p2WeaponRow">
+          <label>Weapon</label>
+          <select id="p2Weapon" onchange="showDesc('p2','weapon',this.value)">
+            <option value="random">🎲 Random</option>
+            <option value="sword">⚔️ Sword</option>
+            <option value="hammer">🔨 Hammer</option>
+            <option value="gun">🔫 Gun</option>
+            <option value="axe">🪓 Axe</option>
+            <option value="spear">🗡️ Spear</option>
+          </select>
+        </div>
+        <div class="config-row" id="p2ClassRow">
+          <label>Class</label>
+          <select id="p2Class" onchange="updateClassWeapon('p2'); showDesc('p2','class',this.value)">
+            <option value="random">🎲 Random</option>
+            <option value="none">⚔️ None</option>
+            <option value="thor">⚡ Thor</option>
+            <option value="kratos">🪓 Kratos</option>
+            <option value="ninja">🗡️ Ninja</option>
+            <option value="gunner">🔫 Gunner</option>
+          </select>
+        </div>
+        <div class="selection-desc" id="p2Desc" style="display:none">
+          <div class="desc-title" id="p2DescTitle"></div>
+          <div class="desc-body"  id="p2DescBody"></div>
+        </div>
+        <div class="config-row" id="difficultyRow" style="display:none">
+          <label>Difficulty</label>
+          <select id="difficulty">
+            <option value="easy">😌 Easy</option>
+            <option value="medium" selected>😐 Medium</option>
+            <option value="hard">😤 Hard</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div><!-- /.menu-side right -->
+
+</div><!-- /#menu -->
 
 <!-- ============================================================
      GAME WRAPPER — fullscreen container for HUD + canvas
@@ -215,6 +290,21 @@
      GAME CANVAS
      ============================================================ -->
 <canvas id="gameCanvas" width="900" height="520"></canvas>
+
+<!-- ============================================================
+     IN-GAME TRAINING HUD (shown during training mode only)
+     ============================================================ -->
+<div id="trainingHud" style="display:none; position:fixed; bottom:10px; left:50%; transform:translateX(-50%); z-index:50; flex-direction:row; gap:6px; background:rgba(0,0,0,0.75); padding:7px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.12);">
+  <button class="btn training-btn" onclick="trainingCmd('giveSuper')">⚡ Super</button>
+  <button class="btn training-btn" onclick="trainingCmd('noCooldowns')">🔄 CDs</button>
+  <button class="btn training-btn" onclick="trainingCmd('fullHealth')">❤ HP</button>
+  <button class="btn training-btn" onclick="trainingCmd('spawnDummy')">🎯 Dummy</button>
+  <button class="btn training-btn" onclick="trainingCmd('spawnBot')">🤖 Bot</button>
+  <button class="btn training-btn" onclick="trainingCmd('clearEnemies')">🗑 Clear</button>
+  <button class="btn training-btn" onclick="trainingCmd('godmode')">🛡 God</button>
+  <button class="btn training-btn" onclick="trainingCmd('spawnBoss')">💀 Boss</button>
+  <button class="btn training-btn" onclick="trainingCmd('onePunch')">👊 1-Punch</button>
+</div>
 
 </div><!-- /#gameWrapper -->
 
