@@ -27,6 +27,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 15px;
   text-align: center;
 }
 
@@ -44,42 +45,84 @@ body {
 }
 
 /* ============================================================
-   MENU  (sits outside #gameWrapper so it can scroll)
+   MENU — 3-column grid layout
    ============================================================ */
 #menu {
   position: relative;
   z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 28px 16px 40px;
-  gap: 22px;
+  display: grid;
+  grid-template-columns: 220px 1fr 220px;
+  grid-template-rows: auto;
+  align-items: start;
+  padding: 20px;
+  gap: 16px;
   min-height: 100vh;
   overflow-y: auto;
   animation: fadeIn 0.4s ease;
-  /* slight dark vignette so cards sit against the animated arena bg */
   background: radial-gradient(ellipse at 50% 30%, rgba(7,7,15,0.05) 0%, rgba(7,7,15,0.30) 100%);
 }
 
 @keyframes fadeIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
 
+/* ============================================================
+   MENU SIDE COLUMNS (Player cards)
+   ============================================================ */
+.menu-side {
+  position: sticky;
+  top: 20px;
+  height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  background: #1a3548;
+  border: 1px solid #2a6080;
+  border-radius: 12px;
+  padding: 8px;
+}
+
+.menu-side.right {
+  background: #1a3548;
+  border-color: #2a6080;
+}
+
+.menu-side .player-config {
+  flex: 1;
+  max-width: none;
+  min-width: 0;
+  border: none;
+  background: transparent;
+}
+
+/* ============================================================
+   CENTER COLUMN
+   ============================================================ */
+.menu-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 22px;
+  padding-bottom: 40px;
+}
+
+/* ============================================================
+   TITLE
+   ============================================================ */
 .game-title {
   font-size: 4.4rem;
   font-weight: 900;
   letter-spacing: 6px;
   text-transform: uppercase;
-  background: linear-gradient(135deg, #ff6600 0%, #ff9900 50%, #ffdd00 100%);
+  background: linear-gradient(135deg, #ff5500 0%, #ff8800 50%, #ffcc00 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
-  filter: drop-shadow(0 0 36px rgba(255,120,0,0.65)) drop-shadow(0 0 14px rgba(255,200,0,0.45));
+  filter: drop-shadow(0 0 40px rgba(255,120,0,0.75)) drop-shadow(0 0 16px rgba(255,200,0,0.55));
   line-height: 1;
   animation: titleGlow 3s ease-in-out infinite;
 }
 
 @keyframes titleGlow {
-  0%, 100% { filter: drop-shadow(0 0 36px rgba(255,120,0,0.65)) drop-shadow(0 0 14px rgba(255,200,0,0.45)); }
-  50%       { filter: drop-shadow(0 0 70px rgba(255,160,0,0.95)) drop-shadow(0 0 30px rgba(255,220,0,0.80)); }
+  0%, 100% { filter: drop-shadow(0 0 40px rgba(255,120,0,0.75)) drop-shadow(0 0 16px rgba(255,200,0,0.55)); }
+  50%       { filter: drop-shadow(0 0 80px rgba(255,160,0,1.0)) drop-shadow(0 0 36px rgba(255,220,0,0.90)); }
 }
 
 .game-subtitle {
@@ -110,8 +153,8 @@ body {
 }
 
 .mode-card {
-  width: 160px;
-  padding: 18px 12px 14px;
+  width: 148px;
+  padding: 20px 12px 16px;
   border: 2px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg2);
@@ -121,18 +164,40 @@ body {
 }
 
 .mode-card:hover {
-  border-color: rgba(255,255,255,0.25);
+  border-color: rgba(255,255,255,0.28);
   background: var(--bg3);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.4);
 }
+.mode-card[data-mode="2p"]:hover    { border-color: rgba(0,212,255,0.45); }
+.mode-card[data-mode="bot"]:hover   { border-color: rgba(255,136,0,0.45); }
+.mode-card[data-mode="boss"]:hover  { border-color: rgba(200,0,238,0.45); }
+.mode-card[data-mode="training"]:hover { border-color: rgba(0,221,85,0.45); }
 
-.mode-card.active {
-  border-color: var(--p1);
-  background: rgba(0, 212, 255, 0.08);
-  box-shadow: 0 0 18px rgba(0, 212, 255, 0.2);
+/* Mode-specific active states */
+.mode-card[data-mode="2p"].active {
+  border-color: #00d4ff;
+  background: rgba(0, 212, 255, 0.10);
+  box-shadow: 0 0 22px rgba(0, 212, 255, 0.30);
 }
+.mode-card[data-mode="bot"].active {
+  border-color: #ff8800;
+  background: rgba(255, 136, 0, 0.10);
+  box-shadow: 0 0 22px rgba(255, 136, 0, 0.30);
+}
+.mode-card[data-mode="boss"].active {
+  border-color: #cc00ee;
+  background: rgba(200, 0, 238, 0.10);
+  box-shadow: 0 0 22px rgba(200, 0, 238, 0.30);
+}
+.mode-card[data-mode="training"].active {
+  border-color: #00dd55;
+  background: rgba(0, 221, 85, 0.10);
+  box-shadow: 0 0 22px rgba(0, 221, 85, 0.30);
+}
+.mode-card[data-mode="boss2p"].active { border-color: #ff88ff; background: rgba(255,136,255,0.12); }
 
-.mode-icon { font-size: 2rem; margin-bottom: 8px; }
+.mode-icon { font-size: 2.1rem; margin-bottom: 8px; }
 .mode-name { font-weight: 800; font-size: 1rem; letter-spacing: 1px; margin-bottom: 4px; }
 .mode-desc { font-size: 0.72rem; color: var(--muted); }
 
@@ -167,25 +232,60 @@ body {
    ============================================================ */
 .players-config {
   display: flex;
-  gap: 20px;
+  gap: 24px;
   align-items: flex-start;
   justify-content: center;
   flex-wrap: wrap;
   width: 100%;
-  max-width: 600px;
+  max-width: 680px;
 }
 
 .player-config {
   flex: 1;
-  min-width: 200px;
-  max-width: 240px;
+  min-width: 180px;
+  max-width: 280px;
   background: var(--bg2);
   border: 1.5px solid var(--border);
   border-radius: var(--radius);
-  padding: 16px 14px;
+  padding: 18px 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: border-color 0.2s ease;
+}
+
+#p1Config { border-color: rgba(0, 212, 255, 0.25); }
+#p2Config { border-color: rgba(255, 68, 85, 0.25); }
+#p1Config:hover { border-color: rgba(0, 212, 255, 0.5); }
+#p2Config:hover { border-color: rgba(255, 68, 85, 0.5); }
+
+.config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.config-header:hover { opacity: 0.85; }
+
+.expand-arrow {
+  font-size: 0.85rem;
+  color: var(--muted);
+  transition: transform 0.18s ease;
+}
+
+.config-body {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.player-config.expanded .config-body {
+  display: flex;
 }
 
 .player-config h3 {
@@ -197,11 +297,56 @@ body {
 #p1Config h3 { color: var(--p1); }
 #p2Config h3 { color: var(--p2); }
 
-.controls-hint {
-  font-size: 0.68rem;
-  color: var(--muted);
-  margin-top: -6px;
+/* Light-blue highlight on config rows */
+.player-config .config-row {
+  background: rgba(0, 180, 255, 0.07);
+  border-radius: 6px;
+  padding: 5px 7px;
+  margin: 0 -3px;
 }
+
+#p2Config .config-row {
+  background: rgba(255, 68, 85, 0.06);
+}
+
+.controls-hint {
+  font-size: 0.74rem;
+  color: var(--muted);
+  margin-top: -4px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   SELECTION DESCRIPTION PANEL
+   ============================================================ */
+.selection-desc {
+  background: rgba(0, 150, 220, 0.10);
+  border: 1px solid rgba(0, 200, 255, 0.22);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font-size: 0.72rem;
+  line-height: 1.55;
+  color: var(--text);
+  margin-top: 4px;
+  animation: fadeIn 0.2s ease;
+}
+
+.desc-title {
+  font-weight: 800;
+  font-size: 0.80rem;
+  letter-spacing: 1px;
+  margin-bottom: 5px;
+  color: var(--p1);
+}
+
+#p2Desc .desc-title { color: var(--p2); }
+#p2Desc { border-color: rgba(255, 68, 85, 0.22); background: rgba(255, 50, 70, 0.07); }
+
+.desc-what    { color: var(--text); }
+.desc-ability { color: #88aaff; display: block; margin-top: 3px; }
+.desc-super   { color: var(--gold); display: block; margin-top: 2px; }
+.desc-perk    { color: #ff9944; display: block; margin-top: 3px; font-weight: 600; }
+.desc-tip     { color: var(--muted); display: block; margin-top: 4px; font-style: italic; }
 
 .config-row {
   display: flex;
@@ -251,6 +396,31 @@ input[type="color"] {
 }
 
 /* ============================================================
+   TRAINING PANEL & BUTTONS
+   ============================================================ */
+.training-btns {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.training-btn {
+  padding: 7px 13px;
+  font-size: 0.76rem;
+  letter-spacing: 0.5px;
+  background: rgba(100, 0, 180, 0.3);
+  border-color: rgba(180, 0, 255, 0.4);
+  color: #cc88ff;
+}
+
+.training-btn:hover {
+  background: rgba(140, 0, 220, 0.5);
+  border-color: rgba(200, 0, 255, 0.7);
+  color: #fff;
+}
+
+/* ============================================================
    START BUTTON
    ============================================================ */
 .btn {
@@ -282,12 +452,18 @@ input[type="color"] {
   border: none;
   color: #fff;
   border-radius: 10px;
-  box-shadow: 0 4px 24px rgba(0, 200, 70, 0.4);
+  box-shadow: 0 4px 24px rgba(0, 200, 70, 0.45);
+  animation: startGlow 2.5s ease-in-out infinite;
+}
+
+@keyframes startGlow {
+  0%, 100% { box-shadow: 0 4px 24px rgba(0, 200, 70, 0.45); }
+  50%       { box-shadow: 0 4px 42px rgba(0, 240, 90, 0.75); }
 }
 
 .btn-start:hover {
   transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 6px 32px rgba(0, 220, 80, 0.6);
+  box-shadow: 0 6px 36px rgba(0, 220, 80, 0.7);
   background: linear-gradient(135deg, #00dd55, #44ff88);
   border: none;
 }
@@ -344,13 +520,16 @@ input[type="color"] {
 }
 
 .controls-info {
-  color: var(--muted);
-  font-size: 0.7rem;
-  line-height: 1.7;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 2.1;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 18px;
+  border-radius: 10px;
+  padding: 14px 22px;
   background: var(--bg2);
+  max-width: 680px;
+  width: 100%;
+  text-align: left;
 }
 
 /* ============================================================
@@ -359,7 +538,6 @@ input[type="color"] {
 #gameCanvas {
   display: none;
   background: #111;
-  /* JS will set inline width/height/marginLeft */
   flex-shrink: 0;
 }
 
@@ -373,7 +551,7 @@ input[type="color"] {
   padding: 8px 16px 6px;
   background: rgba(7,7,15,0.92);
   border-bottom: 1px solid var(--border);
-  width: 100%;        /* span the full viewport */
+  width: 100%;
   flex-shrink: 0;
   gap: 10px;
 }
@@ -579,7 +757,15 @@ input[type="color"] {
 /* ============================================================
    RESPONSIVE
    ============================================================ */
-@media (max-width: 700px) {
+@media (max-width: 800px) {
+  #menu {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+  .menu-side {
+    position: static;
+    height: auto;
+  }
   .game-title { font-size: 2.2rem; }
   #hud { flex-direction: column; align-items: stretch; }
   .hud-side.right { align-items: flex-start; }
