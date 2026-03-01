@@ -3320,7 +3320,7 @@ function triggerFakeDeath(player) {
     // Force-interrupt any current dialogue after 1.2s
     setTimeout(() => {
       if (gameRunning) {
-        bossDialogue = { text: "I'm not done with you yet...", timer: 320 };
+        bossDialogue = { text: "We aren't finished yet..", timer: 320 };
       }
     }, 1200);
   }
