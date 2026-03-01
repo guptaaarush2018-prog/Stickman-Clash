@@ -5,6 +5,7 @@
 // ============================================================
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = true;
 
 // ============================================================
 // GLOBAL STATE
@@ -15,11 +16,27 @@ let chosenLives     = 3;
 let gameRunning     = false;
 let paused          = false;
 let players         = [];
+let minions         = [];    // boss-spawned minions
+let bossBeams       = [];    // boss beam attacks (warning + active)
+let bossSpikes      = [];    // boss spike attacks rising from floor
+let infiniteMode    = false; // if true, no game over — just win counter
+let trainingMode    = false; // training mode flag
+let trainingDummies = [];    // training dummies/bots
+let winsP1 = 0, winsP2 = 0;
+let bossDialogue    = { text: '', timer: 0 }; // speech bubble above boss
 let projectiles        = [];
 let particles          = [];
 let damageTexts        = [];
 let respawnCountdowns  = [];  // { color, x, y, framesLeft }
 let screenShake     = 0;
+
+let backstagePortals = [];    // {x,y,type,phase,timer,radius,maxRadius,codeChars,done}
+let bossDeathScene   = null;  // boss defeat animation state
+let fakeDeath       = { triggered: false, active: false, timer: 0, player: null };
+let bossTwoPlayer   = false;
+let mapItems        = [];   // arena-perk pickups
+let randomWeaponPool = null; // null = use all; Set of weapon keys
+let randomClassPool  = null; // null = use all; Set of class keys
 
 // Boss fight floor hazard state machine
 let bossFloorState = 'normal';  // 'normal' | 'warning' | 'hazard'
@@ -37,7 +54,7 @@ let bgStars     = [];
 let bgBuildings = [];
 
 // Arena order (used for menu background cycling)
-const ARENA_KEYS_ORDERED = ['grass', 'city', 'space', 'lava'];
+const ARENA_KEYS_ORDERED = ['grass', 'city', 'space', 'lava', 'forest', 'ice', 'ruins'];
 
 // Menu background cycling state
 let menuBgArenaIdx   = 0;
@@ -67,13 +84,14 @@ const ARENAS = {
     ]
   },
   lava: {
-    sky:         ['#1a0000', '#3d0800'],
-    groundColor: '#ff4500',
-    platColor:   '#6b2b0a',
-    platEdge:    '#8b3a0f',
-    hasLava:     true,
+    sky:            ['#1a0000', '#3d0800'],
+    groundColor:    '#ff4500',
+    platColor:      '#6b2b0a',
+    platEdge:       '#8b3a0f',
+    hasLava:        true,
+    isHeavyGravity: true,
     lavaY:       442,
-    deathY:      442,
+    deathY:      580,
     platforms: [
       { x: 360, y: 188, w: 180, h: 18 }, // top centre
       { x: 178, y: 278, w: 140, h: 18 }, // upper left
@@ -84,12 +102,13 @@ const ARENAS = {
     ]
   },
   space: {
-    sky:         ['#000010', '#000830'],
-    groundColor: '#2a2a4a',
-    platColor:   '#3a3a6a',
-    platEdge:    '#5a5a9a',
-    hasLava:     false,
-    deathY:      640,
+    sky:          ['#000010', '#000830'],
+    groundColor:  '#2a2a4a',
+    platColor:    '#3a3a6a',
+    platEdge:     '#5a5a9a',
+    hasLava:      false,
+    deathY:       640,
+    isLowGravity: true,
     platforms: [
       { x:   0, y: 480, w: 900, h: 40 }, // floor
       { x: 355, y: 255, w: 190, h: 15 }, // centre top
@@ -134,8 +153,312 @@ const ARENAS = {
       { x: 585, y: 220, w: 130, h: 18, oy: 220, oscY: 28,  oscSpeed: 0.022, oscPhase: 1.6 },
       { x: 375, y: 155, w: 150, h: 18 },
     ]
+  },
+  forest: {
+    sky:         ['#1a4020', '#2d6b3a'],
+    groundColor: '#2a5a20',
+    platColor:   '#4a8a38',
+    platEdge:    '#2a5a18',
+    hasLava:     false,
+    deathY:      640,
+    platforms: [
+      { x:   0, y: 480, w: 900, h: 40 },
+      { x: 340, y: 270, w: 220, h: 18 },
+      { x: 120, y: 345, w: 145, h: 18 },
+      { x: 635, y: 345, w: 145, h: 18 },
+      { x:  18, y: 215, w: 110, h: 16 },
+      { x: 772, y: 215, w: 110, h: 16 },
+      { x: 375, y: 178, w: 150, h: 16 },
+    ]
+  },
+  ice: {
+    sky:         ['#99c8e8', '#cce8f8'],
+    groundColor: '#b8d8ee',
+    platColor:   '#7ab0d0',
+    platEdge:    '#5090b8',
+    hasLava:     false,
+    deathY:      640,
+    isIcy:       true,
+    platforms: [
+      { x:   0, y: 460, w: 900, h: 60 },
+      { x: 310, y: 285, w: 280, h: 16 },
+      { x:  70, y: 360, w: 170, h: 16 },
+      { x: 660, y: 360, w: 170, h: 16 },
+      { x: 185, y: 225, w: 130, h: 16 },
+      { x: 585, y: 225, w: 130, h: 16 },
+    ]
+  },
+  ruins: {
+    sky:         ['#1f1008', '#3a2418'],
+    groundColor: '#7a6445',
+    platColor:   '#8a7455',
+    platEdge:    '#5a4432',
+    hasLava:     false,
+    deathY:      640,
+    platforms: [
+      { x:   0, y: 440, w: 260, h: 80 },
+      { x: 320, y: 440, w: 260, h: 80 },
+      { x: 640, y: 440, w: 260, h: 80 },
+      { x:  90, y: 330, w: 145, h: 18 },
+      { x: 665, y: 330, w: 145, h: 18 },
+      { x: 360, y: 260, w: 180, h: 18 },
+      { x: 195, y: 200, w: 120, h: 15 },
+      { x: 585, y: 200, w: 120, h: 15 },
+    ]
   }
 };
+
+// ============================================================
+// ARENA LAYOUT RANDOMIZATION
+// ============================================================
+// Stores base platform positions per arena for randomization reference
+const ARENA_BASE_PLATFORMS = {};
+for (const key of Object.keys(ARENAS)) {
+  if (key === 'creator') continue; // boss arena — never randomize
+  ARENA_BASE_PLATFORMS[key] = ARENAS[key].platforms.map(p => ({ ...p }));
+}
+
+function randomizeArenaLayout(key) {
+  if (key === 'creator') return; // never randomize boss arena
+  const base  = ARENA_BASE_PLATFORMS[key];
+  if (!base) return;
+  const arena = ARENAS[key];
+  arena.platforms = base.map((p, idx) => {
+    if (idx === 0) return { ...p }; // always keep ground platform fixed
+    // Randomize within ±70px x, ±45px y (except ground)
+    return {
+      ...p,
+      x: Math.max(10, Math.min(canvas.width - p.w - 10, p.x + (Math.random() - 0.5) * 140)),
+      y: Math.max(80, Math.min(440, p.y + (Math.random() - 0.5) * 90))
+    };
+  });
+}
+
+// ============================================================
+// MAP PERKS — per-arena special item/event state
+// ============================================================
+const MAP_PERK_DEFS = {
+  ruins: {
+    items: [
+      { baseX: 135, baseY: 400 },  // on left block
+      { baseX: 450, baseY: 400 },  // on center block
+      { baseX: 765, baseY: 400 },  // on right block
+    ],
+    types: ['speed','power','heal','shield']
+  },
+  forest: {
+    healZones: [{ x: 0, w: 900, healRate: 60 }]  // gentle healing every 60 frames
+  },
+  city: {
+    carCooldown: 600  // frames between car runs
+  },
+  lava: {
+    eruptionCooldown: 480
+  }
+};
+
+let mapPerkState = {};  // runtime state per arena
+
+function initMapPerks(key) {
+  mapItems    = [];
+  mapPerkState = {};
+  if (key === 'ruins') {
+    const def = MAP_PERK_DEFS.ruins;
+    for (const pos of def.items) {
+      mapItems.push({
+        x: pos.baseX, y: pos.baseY - 22,
+        type: def.types[Math.floor(Math.random() * def.types.length)],
+        collected: false, respawnIn: 0, radius: 14, animPhase: Math.random() * Math.PI * 2
+      });
+    }
+  }
+  if (key === 'city') {
+    mapPerkState.carCooldown = MAP_PERK_DEFS.city.carCooldown;
+    mapPerkState.cars        = [];
+  }
+  if (key === 'lava') {
+    mapPerkState.eruptCooldown = MAP_PERK_DEFS.lava.eruptionCooldown;
+    mapPerkState.eruptions     = [];
+  }
+}
+
+function updateMapPerks() {
+  if (!currentArena || !gameRunning) return;
+
+  // ---- RUINS: Artifact pickups ----
+  if (currentArenaKey === 'ruins') {
+    for (const item of mapItems) {
+      item.animPhase += 0.06;
+      if (item.collected) {
+        item.respawnIn--;
+        if (item.respawnIn <= 0) {
+          item.collected = false;
+          item.type = MAP_PERK_DEFS.ruins.types[Math.floor(Math.random() * 4)];
+        }
+        continue;
+      }
+      // Check proximity
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const dx = p.cx() - item.x, dy = (p.y + p.h/2) - item.y;
+        if (Math.hypot(dx, dy) < 28) {
+          item.collected  = true;
+          item.respawnIn  = 1800 + Math.random() * 600; // 30–40 s
+          applyMapPerk(p, item.type);
+          spawnParticles(item.x, item.y, '#ffd700', 16);
+          screenShake = Math.max(screenShake, 6);
+          if (settings.dmgNumbers) {
+            const labels = { speed:'SWIFT!', power:'POWER!', heal:'+30 HP', shield:'SHIELD!' };
+            damageTexts.push(new DamageText(item.x, item.y - 20, labels[item.type] || '!', '#ffd700'));
+          }
+          break;
+        }
+      }
+    }
+  }
+
+  // ---- FOREST: Gradual healing ----
+  if (currentArenaKey === 'forest' && frameCount % 90 === 0) {
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0 || p.hurtTimer > 0) continue;
+      if (p.onGround && p.health < p.maxHealth) {
+        p.health = Math.min(p.maxHealth, p.health + 1);
+        if (settings.particles && Math.random() < 0.4) {
+          spawnParticles(p.cx(), p.y, '#44ff44', 3);
+        }
+      }
+    }
+  }
+
+  // ---- CITY: Occasional car ----
+  if (currentArenaKey === 'city') {
+    if (mapPerkState.carCooldown > 0) {
+      mapPerkState.carCooldown--;
+    } else {
+      // Spawn a car
+      const fromLeft = Math.random() < 0.5;
+      mapPerkState.cars.push({ x: fromLeft ? -60 : canvas.width + 60, y: 432,
+        vx: fromLeft ? 9 : -9, warned: false, warnTimer: 60 });
+      mapPerkState.carCooldown = 1200 + Math.floor(Math.random() * 800);
+    }
+    if (!mapPerkState.cars) mapPerkState.cars = [];
+    for (let ci = mapPerkState.cars.length - 1; ci >= 0; ci--) {
+      const car = mapPerkState.cars[ci];
+      if (car.warnTimer > 0) { car.warnTimer--; continue; }
+      car.x += car.vx;
+      if (car.x < -120 || car.x > canvas.width + 120) {
+        mapPerkState.cars.splice(ci, 1); continue;
+      }
+      // Damage players in path
+      for (const p of players) {
+        if (p.health <= 0 || p.invincible > 0) continue;
+        if (Math.abs(p.cx() - car.x) < 40 && Math.abs((p.y + p.h) - car.y) < 60) {
+          dealDamage(players.find(q => q.isBoss) || players[1], p, 18, 16);
+        }
+      }
+    }
+  }
+
+  // ---- LAVA: Eruptions ----
+  if (currentArenaKey === 'lava') {
+    if (!mapPerkState.eruptCooldown) mapPerkState.eruptCooldown = 480;
+    if (!mapPerkState.eruptions)     mapPerkState.eruptions     = [];
+    mapPerkState.eruptCooldown--;
+    if (mapPerkState.eruptCooldown <= 0) {
+      const ex = 60 + Math.random() * 780;
+      mapPerkState.eruptions.push({ x: ex, timer: 80 });
+      mapPerkState.eruptCooldown = 480 + Math.floor(Math.random() * 480);
+    }
+    for (let ei = mapPerkState.eruptions.length - 1; ei >= 0; ei--) {
+      const er = mapPerkState.eruptions[ei];
+      er.timer--;
+      if (er.timer <= 0) { mapPerkState.eruptions.splice(ei, 1); continue; }
+      if (er.timer % 5 === 0 && settings.particles) {
+        const upA = -Math.PI/2 + (Math.random()-0.5)*0.5;
+        particles.push({ x: er.x, y: currentArena.lavaY || 442,
+          vx: Math.cos(upA)*5, vy: Math.sin(upA)*(8+Math.random()*8),
+          color: Math.random() < 0.5 ? '#ff4400' : '#ff8800',
+          size: 3+Math.random()*4, life: 30+Math.random()*20, maxLife: 50 });
+      }
+      // Damage nearby players
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0 || p.invincible > 0) continue;
+        if (Math.abs(p.cx() - er.x) < 40 && p.y + p.h > (currentArena.lavaY || 442) - 80) {
+          if (er.timer % 10 === 0) dealDamage(players.find(q => q.isBoss) || players[1], p, 10, 8);
+        }
+      }
+    }
+  }
+}
+
+function applyMapPerk(player, type) {
+  if (type === 'heal') {
+    player.health = Math.min(player.maxHealth, player.health + 30);
+  } else if (type === 'speed') {
+    player._speedBuff = 360; // 6 seconds
+  } else if (type === 'power') {
+    player._powerBuff = 360;
+  } else if (type === 'shield') {
+    player.invincible = Math.max(player.invincible, 180);
+    spawnParticles(player.cx(), player.cy(), '#88ddff', 20);
+  }
+}
+
+function drawMapPerks() {
+  // ---- RUINS artifacts ----
+  if (currentArenaKey === 'ruins') {
+    for (const item of mapItems) {
+      if (item.collected) continue;
+      const bob   = Math.sin(item.animPhase) * 5;
+      const glow  = 0.6 + Math.sin(item.animPhase * 1.3) * 0.3;
+      const colors = { speed:'#44aaff', power:'#ff4422', heal:'#44ff88', shield:'#88ddff' };
+      const glowC  = colors[item.type] || '#ffd700';
+      ctx.save();
+      ctx.shadowColor = glowC;
+      ctx.shadowBlur  = 12 * glow;
+      ctx.fillStyle   = glowC;
+      ctx.globalAlpha = 0.9;
+      ctx.beginPath();
+      ctx.arc(item.x, item.y + bob, 10, 0, Math.PI * 2);
+      ctx.fill();
+      // Icon letter
+      ctx.fillStyle   = '#000';
+      ctx.shadowBlur  = 0;
+      ctx.font        = 'bold 10px Arial';
+      ctx.textAlign   = 'center';
+      ctx.textBaseline = 'middle';
+      const icons = { speed:'\u26a1', power:'\ud83d\udca5', heal:'\u2764', shield:'\ud83d\udee1' };
+      ctx.fillText(icons[item.type] || '?', item.x, item.y + bob);
+      ctx.restore();
+    }
+  }
+
+  // ---- CITY cars ----
+  if (currentArenaKey === 'city' && mapPerkState.cars) {
+    for (const car of mapPerkState.cars) {
+      if (car.warnTimer > 0) {
+        // Warning arrow
+        const wx = car.vx > 0 ? 20 : canvas.width - 20;
+        ctx.save();
+        ctx.globalAlpha = Math.sin(frameCount * 0.3) * 0.5 + 0.5;
+        ctx.fillStyle   = '#ff4400';
+        ctx.font        = 'bold 18px Arial';
+        ctx.textAlign   = 'center';
+        ctx.fillText(car.vx > 0 ? '\u25b6 CAR!' : 'CAR! \u25c0', wx, car.y - 20);
+        ctx.restore();
+        continue;
+      }
+      ctx.save();
+      ctx.fillStyle = '#cc3300';
+      ctx.fillRect(car.x - 30, car.y - 24, 60, 24);
+      ctx.fillStyle = '#ff5500';
+      ctx.fillRect(car.x - 24, car.y - 38, 48, 16);
+      ctx.fillStyle = '#ffee88';
+      ctx.fillRect(car.vx > 0 ? car.x + 26 : car.x - 34, car.y - 20, 8, 8);
+      ctx.restore();
+    }
+  }
+}
 
 // ============================================================
 // WEAPON DEFINITIONS
@@ -143,7 +466,7 @@ const ARENAS = {
 const WEAPONS = {
   sword: {
     // Fast gap-closer. Good damage, moderate reach.
-    name: 'Sword',   damage: 18, range: 74, cooldown: 18,
+    name: 'Sword',   damage: 18, range: 74, cooldown: 28,
     kb: 11,          abilityCooldown: 140, type: 'melee', color: '#cccccc',
     abilityName: 'Dash Slash',
     ability(user, target) {
@@ -153,7 +476,7 @@ const WEAPONS = {
   },
   hammer: {
     // Devastating but very slow. Short range forces commitment.
-    name: 'Hammer',  damage: 28, range: 54, cooldown: 40,
+    name: 'Hammer',  damage: 28, range: 54, cooldown: 50,
     kb: 20,          abilityCooldown: 210, type: 'melee', color: '#888888',
     abilityName: 'Ground Slam',
     ability(user, target) {
@@ -163,22 +486,24 @@ const WEAPONS = {
     }
   },
   gun: {
-    // Ranged weapon. Rapid Fire burst is the win condition.
-    name: 'Gun',     damage: 16, range: 600, cooldown: 14,
-    kb: 7,           abilityCooldown: 110, type: 'ranged', color: '#666666',
+    // Ranged weapon. Each bullet deals 5–8 random damage.
+    name: 'Gun',     damage: 10, range: 600, cooldown: 32,
+    damageFunc: () => Math.floor(Math.random() * 4) + 5,
+    superRateBonus: 2.8,
+    kb: 6,           abilityCooldown: 150, type: 'ranged', color: '#666666',
     abilityName: 'Rapid Fire',
     ability(user, _target) {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 5; i++) {
         setTimeout(() => {
           if (!gameRunning || user.health <= 0) return;
           spawnBullet(user, 14 + (Math.random()-0.5)*2, '#ffdd00');
-        }, i * 60);
+        }, i * 80);
       }
     }
   },
   axe: {
     // Balanced all-rounder. Spin ability covers both sides.
-    name: 'Axe',     damage: 22, range: 70, cooldown: 26,
+    name: 'Axe',     damage: 22, range: 70, cooldown: 36,
     kb: 14,          abilityCooldown: 150, type: 'melee', color: '#cc4422',
     abilityName: 'Spin Attack',
     ability(user, target) {
@@ -188,7 +513,7 @@ const WEAPONS = {
   },
   spear: {
     // Longest reach, consistent damage. Rewards spacing.
-    name: 'Spear',   damage: 18, range: 105, cooldown: 20,
+    name: 'Spear',   damage: 18, range: 105, cooldown: 28,
     kb: 10,          abilityCooldown: 155, type: 'melee', color: '#8888ff',
     abilityName: 'Lunge',
     ability(user, target) {
@@ -196,10 +521,62 @@ const WEAPONS = {
       user.vy = -6;
       if (dist(user, target) < 155) dealDamage(user, target, 30, 15);
     }
+  },
+  gauntlet: {
+    // Boss-only weapon. Low base contact damage, massive void slam ability.
+    name: 'Gauntlet', damage: 5, range: 34, cooldown: 22,
+    kb: 10,            abilityCooldown: 200, type: 'melee', color: '#9900ee',
+    contactDmgMult: 0.4,
+    abilityName: 'Void Slam',
+    ability(user, _target) {
+      screenShake = Math.max(screenShake, 28);
+      spawnRing(user.cx(), user.cy());
+      spawnRing(user.cx(), user.cy());
+      for (const p of players) {
+        if (p === user || p.health <= 0) continue;
+        if (dist(user, p) < 165) dealDamage(user, p, 30, 40);
+      }
+      // Also hit training dummies
+      for (const d of trainingDummies) {
+        if (d.health <= 0) continue;
+        if (dist(user, d) < 165) dealDamage(user, d, 7, 40);
+      }
+    }
   }
 };
 
-const WEAPON_KEYS = Object.keys(WEAPONS);
+const WEAPON_KEYS = Object.keys(WEAPONS).filter(k => k !== 'gauntlet');
+
+// ============================================================
+// CHARACTER CLASSES
+// ============================================================
+const CLASSES = {
+  none:   { name: 'None',     emoji: '⚔️', desc: 'Standard balanced fighter',       weapon: null,     hp: 100, speedMult: 1.00, perk: null        },
+  thor:   { name: 'Thor',     emoji: '⚡', desc: 'Hammer master, thunder on dash',  weapon: 'hammer', hp: 115, speedMult: 0.90, perk: 'thunder'   },
+  kratos: { name: 'Kratos',   emoji: '🪓', desc: 'Axe specialist, rage on hit',     weapon: 'axe',    hp: 125, speedMult: 0.92, perk: 'rage'      },
+  ninja:  { name: 'Ninja',    emoji: '🗡️', desc: 'Fast sword fighter, quick dash',  weapon: 'sword',  hp: 80,  speedMult: 1.22, perk: 'swift'     },
+  gunner: { name: 'Gunner',   emoji: '🔫', desc: 'Dual-shot gunslinger',            weapon: 'gun',    hp: 95,  speedMult: 1.05, perk: 'dual_shot' },
+};
+
+// ============================================================
+// WEAPON & CLASS DESCRIPTIONS  (shown in menu sidebar)
+// ============================================================
+const WEAPON_DESCS = {
+  random:  { title: '🎲 Random Weapon',  what: 'Picks a random weapon each game — embrace the chaos.',                                                        ability: null,                                                    super: null,                                                      how:  'Adapt to whatever you get each round.' },
+  sword:   { title: '⚔️ Sword',          what: 'Fast, balanced melee weapon with good range.',                                                                 ability: 'Q — Dash Slash: dashes forward and slices for 36 dmg.',  super: 'E — Power Thrust: massive forward lunge for 60 dmg.',      how:  'Great all-rounder. Use Dash Slash to chase and punish.' },
+  hammer:  { title: '🔨 Hammer',         what: 'Slow but devastating. Huge knockback on every hit.',                                                           ability: 'Q — Ground Slam: shockwave AoE around you for 34 dmg.',  super: 'E — Mega Slam: screen-shaking AoE crush for 58 dmg.',      how:  'Get close, be patient, then smash hard.' },
+  gun:     { title: '🔫 Gun',            what: 'Ranged weapon. Each bullet deals 5–8 damage. Super deals 9–12.',                                               ability: 'Q — Rapid Fire: 5-shot burst.',                          super: 'E — Bullet Storm: 14 rapid shots (9–12 dmg each).',        how:  'Keep your distance. Use Rapid Fire to pressure from afar.' },
+  axe:     { title: '🪓 Axe',            what: 'Balanced melee with solid damage and good knockback.',                                                          ability: 'Q — Spin Attack: 360° slash that hits both sides.',       super: 'E — Berserker Spin: long spinning AoE for 52 dmg.',        how:  'Use Spin Attack in tight spots to cover all angles.' },
+  spear:   { title: '🗡️ Spear',          what: 'Longest melee reach in the game. Rewards good spacing.',                                                       ability: 'Q — Lunge: leap forward with the spear for 30 dmg.',     super: 'E — Sky Piercer: aerial forward lunge for 50 dmg.',        how:  'Stay at optimal range. Poke safely from afar.' },
+};
+
+const CLASS_DESCS = {
+  none:   { title: '⚔️ No Class',  what: 'No class modifier. Full freedom of weapon choice.',                                                                   perk: null,                                                                                                                        how:  'Choose any weapon — pure skill matters.' },
+  thor:   { title: '⚡ Thor',      what: 'Hammer master. Slower movement but powerful strikes. Forces Hammer.',                                                  perk: '🌩️ Lightning Storm (≤20% HP, once): Summons 3 lightning bolts on the enemy — 8 dmg each + stun. Activates automatically.',   how:  'Tank hits to trigger the lightning perk when low. Then finish with your super.' },
+  kratos: { title: '🪓 Kratos',    what: 'Axe specialist. More HP, builds rage when hit. Forces Axe.',                                                           perk: '🔥 Spartan Rage (≤15% HP, once): Auto-heals to 30% HP and boosts your damage by +50% for 5 seconds.',                        how:  'Survive the threat threshold — let the rage save you. Strike hard in the buff window.' },
+  ninja:  { title: '🗡️ Ninja',     what: 'Extremely fast sword fighter. Fragile but elusive. Forces Sword.',                                                     perk: '👁 Shadow Step (≤25% HP, once): 2 seconds of full invincibility and all cooldowns instantly reset.',                          how:  'Use your speed advantage to dodge. The perk buys time to escape and counter.' },
+  gunner: { title: '🔫 Gunner',    what: 'Dual-shot gunslinger — fires 2 bullets every shot. Forces Gun.',                                                       perk: '💥 Last Stand (≤20% HP, once): Fires 8 bullets in all directions for 3–5 dmg each.',                                         how:  'Keep distance at all times. The burst perk punishes enemies who close in when you\'re low.' },
+};
 
 // ============================================================
 // HELPERS
@@ -209,16 +586,51 @@ function lerp(a, b, t)   { return a + (b - a) * t; }
 function clamp(v, mn, mx){ return Math.max(mn, Math.min(mx, v)); }
 function dist(a, b)      { return Math.hypot(a.cx() - b.cx(), (a.y + a.h/2) - (b.y + b.h/2)); }
 
-function dealDamage(attacker, target, dmg, kbForce) {
+function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0) {
   if (target.invincible > 0 || target.health <= 0) return;
-  let actualDmg = dmg;
+  let actualDmg = (attacker && attacker.dmgMult !== undefined) ? Math.max(1, Math.round(dmg * attacker.dmgMult)) : dmg;
+  // Kratos rage bonus
+  if (attacker && attacker.charClass === 'kratos' && attacker.rageStacks > 0) {
+    actualDmg = Math.round(actualDmg * (1 + Math.min(attacker.rageStacks, 30) * 0.015));
+  }
+  // Kratos: Spartan Rage active — +50% damage
+  if (attacker && attacker.spartanRageTimer > 0) {
+    actualDmg = Math.round(actualDmg * 1.5);
+  }
+  // Map perk: power buff
+  if (attacker && attacker._powerBuff > 0) actualDmg = Math.round(actualDmg * 1.35);
+  // Kratos: target being hit builds rage stacks
+  if (target && target.charClass === 'kratos') {
+    target.rageStacks = Math.min(30, (target.rageStacks || 0) + 1);
+  }
   let actualKb  = kbForce;
+  // Post-teleport critical hit window (boss only)
+  if (attacker && attacker.isBoss && attacker.postTeleportCrit > 0) {
+    if (Math.random() < 0.65) {
+      actualDmg = Math.round(actualDmg * 2.2);
+      spawnParticles(target.cx(), target.cy(), '#ff8800', 18);
+      spawnParticles(target.cx(), target.cy(), '#ffff00', 10);
+    }
+  }
   if (target.shielding) {
     actualDmg = Math.max(1, Math.floor(dmg * 0.08));
     actualKb  = Math.floor(kbForce * 0.15);
     spawnParticles(target.cx(), target.cy(), '#88ddff', 6);
   } else {
     target.hurtTimer = 8;
+  }
+  // Boss modifier: deals double KB, takes half KB
+  if (attacker.kbBonus) actualKb = Math.round(actualKb * attacker.kbBonus);
+  if (target.kbResist)  actualKb = Math.round(actualKb * target.kbResist);
+
+  // One-punch mode: training only — instantly kills on hit
+  if (trainingMode && attacker && attacker.onePunchMode && !target.shielding) {
+    actualDmg = target.health; // always lethal
+  } else {
+    // Class perk protection: can't be one-shot before their passive triggers
+    if (!target.shielding && target.charClass !== 'none' && !target.classPerkUsed && target.health > 1) {
+      actualDmg = Math.min(actualDmg, target.health - 1);
+    }
   }
   target.health    = Math.max(0, target.health - actualDmg);
   target.invincible = 16;
@@ -228,19 +640,22 @@ function dealDamage(attacker, target, dmg, kbForce) {
   if (settings.screenShake) screenShake = Math.max(screenShake, target.shielding ? 3 : 9);
   if (!target.shielding) {
     spawnParticles(target.cx(), target.cy(), target.color, 12);
-    // Chance-based stun / ragdoll (not guaranteed)
-    if (actualKb >= 16 && Math.random() < 0.70) {
-      target.ragdollTimer = 26 + Math.floor(actualKb * 1.6);
-      target.stunTimer    = target.ragdollTimer + 16;
+    // Chance-based stun / ragdoll (not guaranteed; boss is harder to ragdoll)
+    const ragdollChance = target.kbResist ? 0.30 * target.kbResist : 0.30;
+    const MAX_STUN = 90; // cap at 1.5s
+    if (actualKb >= 16 && Math.random() < ragdollChance) {
+      target.ragdollTimer = Math.min(70, 26 + Math.floor(actualKb * 1.6));
+      target.stunTimer    = Math.min(MAX_STUN, target.ragdollTimer + 16);
       // Assign angular momentum for ragdoll spin
       target.ragdollSpin  = dir * (0.12 + Math.random() * 0.10);
     } else if (actualKb >= 8 && Math.random() < 0.45) {
-      target.stunTimer    = 18 + Math.floor(actualKb * 1.1);
+      target.stunTimer    = Math.min(MAX_STUN, 18 + Math.floor(actualKb * 1.1));
     }
   }
-  // Super only charges for the attacker from dealing damage (independent per player)
+  // Super charges for the attacker; gun charges faster via superRateBonus
+  const superRate = (attacker.superChargeRate || 1) * (attacker.weapon && attacker.weapon.superRateBonus || 1);
   const prev = attacker.superReady;
-  attacker.superMeter = Math.min(100, attacker.superMeter + Math.floor(actualDmg * 0.70));
+  attacker.superMeter = Math.min(100, attacker.superMeter + Math.floor(actualDmg * 0.70 * superRate));
   if (!prev && attacker.superMeter >= 100) {
     attacker.superReady      = true;
     attacker.superFlashTimer = 90;
@@ -267,11 +682,20 @@ function spawnRing(x, y) {
   }
 }
 
-function spawnBullet(user, speed, color) {
+function spawnBullet(user, speed, color, overrideDmg = null) {
+  const dmg = overrideDmg !== null ? overrideDmg : (user.weapon.damageFunc ? user.weapon.damageFunc() : user.weapon.damage);
   projectiles.push(new Projectile(
     user.cx() + user.facing * 12, user.y + 22,
-    user.facing * speed, 0, user, user.weapon.damage, color
+    user.facing * speed, 0, user, dmg, color
   ));
+  // Gunner class: fire a second bullet at slight angle
+  if (user.charClass === 'gunner') {
+    const dmg2 = user.weapon.damageFunc ? user.weapon.damageFunc() : user.weapon.damage;
+    projectiles.push(new Projectile(
+      user.cx() + user.facing * 12, user.y + 26,
+      user.facing * speed * 0.92, -0.8, user, dmg2, color
+    ));
+  }
 }
 
 // ============================================================
@@ -308,6 +732,30 @@ class Projectile {
         this.active = false;
         spawnParticles(this.x, this.y, this.color, 6);
         return;
+      }
+    }
+    // minion collision — player/non-minion projectiles can kill minions
+    if (!this.owner.isMinion && !(this.owner instanceof Boss)) {
+      for (const mn of minions) {
+        if (mn.health <= 0) continue;
+        if (this.x > mn.x && this.x < mn.x+mn.w && this.y > mn.y && this.y < mn.y+mn.h) {
+          dealDamage(this.owner, mn, this.damage, 9);
+          this.active = false;
+          spawnParticles(this.x, this.y, this.color, 6);
+          return;
+        }
+      }
+    }
+    // training dummy collision
+    if (!this.owner.isDummy) {
+      for (const dum of trainingDummies) {
+        if (dum.health <= 0) continue;
+        if (this.x > dum.x && this.x < dum.x+dum.w && this.y > dum.y && this.y < dum.y+dum.h) {
+          dealDamage(this.owner, dum, this.damage, 9);
+          this.active = false;
+          spawnParticles(this.x, this.y, this.color, 6);
+          return;
+        }
       }
     }
   }
@@ -396,10 +844,24 @@ class Fighter {
     this.superMeter      = 0;    // 0-100 super charge
     this.superReady      = false; // true when super is fully charged
     this.superFlashTimer = 0;    // countdown for "SUPER!" text above player
+    this.superChargeRate = 0.5;  // halved from default — boss overrides to 3
+    this.charClass      = 'none';
+    this.classSpeedMult = 1.0;
+    this.rageStacks     = 0;
+    this.godmode        = false;
+    this.backstageHiding = false;
+    this.classPerkUsed   = false;  // one-time class passive; resets each life
+    this.spartanRageTimer = 0;     // Kratos: frames of +50% damage boost
+    this.noCooldownsActive = false;
+    this.lavaBurnTimer = 0;
     this.contactDamageCooldown = 0; // frames between passive weapon contact hits
     this.ragdollAngle    = 0;    // accumulated spin angle during ragdoll
     this.ragdollSpin     = 0;    // angular velocity (rad/frame) for ragdoll tumble
     this.animTimer    = 0;
+    this._speedBuff   = 0;
+    this._powerBuff   = 0;
+    this._maxLives    = chosenLives; // for correct heart display
+    this.onePunchMode = false;       // training: kills anything in one hit
     this.target       = null;
     this.aiState     = 'chase';
     this.aiReact     = 0;
@@ -425,12 +887,15 @@ class Fighter {
     this.boostCooldown   = 0;
     this.shieldHoldTimer = 0;
     this.canDoubleJump   = false;
-    this.superMeter      = 0;
-    this.superReady      = false;
-    this.superFlashTimer = 0;
+    // superMeter / superReady intentionally NOT reset — supers carry over between lives
     this.contactDamageCooldown = 0;
     this.ragdollAngle    = 0;
     this.ragdollSpin     = 0;
+    this.lavaBurnTimer   = 0;
+    this._speedBuff      = 0;
+    this._powerBuff      = 0;
+    this.classPerkUsed    = false;
+    this.spartanRageTimer = 0;
     this.invincible      = 100;
     spawnParticles(this.cx(), this.cy(), this.color, 22);
   }
@@ -451,7 +916,14 @@ class Fighter {
     if (this.shieldCooldown > 0)       this.shieldCooldown--;
     if (this.contactDamageCooldown > 0) this.contactDamageCooldown--;
     if (this.superFlashTimer > 0)      this.superFlashTimer--;
+    if (this.spartanRageTimer > 0) this.spartanRageTimer--;
     this.animTimer++;
+
+    if (this.noCooldownsActive) {
+      this.cooldown = 0; this.cooldown2 = 0;
+      this.abilityCooldown = 0; this.abilityCooldown2 = 0;
+      this.shieldCooldown = 0; this.boostCooldown = 0;
+    }
 
     // ---- RAGDOLL SPIN PHYSICS ----
     if (this.ragdollTimer > 0) {
@@ -467,11 +939,36 @@ class Fighter {
       const tip = this.getWeaponTipPos();
       if (tip) {
         const tgt = this.target;
+        const hitPad = this.isAI ? 16 : 10;
         if (tgt.health > 0 &&
-            tip.x > tgt.x - 10 && tip.x < tgt.x + tgt.w + 10 &&
-            tip.y > tgt.y       && tip.y < tgt.y + tgt.h) {
+            tip.x > tgt.x - hitPad && tip.x < tgt.x + tgt.w + hitPad &&
+            tip.y > tgt.y - 8      && tip.y < tgt.y + tgt.h + 8) {
           dealDamage(this, tgt, this.weapon.damage, this.weapon.kb);
           this.weaponHit = true;
+        }
+        // Player melee also hits minions
+        if (!this.weaponHit && !this.isMinion && !(this instanceof Boss)) {
+          for (const mn of minions) {
+            if (mn.health > 0 &&
+                tip.x > mn.x - 12 && tip.x < mn.x + mn.w + 12 &&
+                tip.y > mn.y     && tip.y < mn.y + mn.h) {
+              dealDamage(this, mn, this.weapon.damage, this.weapon.kb);
+              this.weaponHit = true;
+              break;
+            }
+          }
+        }
+        // Player melee also hits training dummies
+        if (!this.weaponHit && !this.isDummy) {
+          for (const dum of trainingDummies) {
+            if (dum.health > 0 &&
+                tip.x > dum.x - 8 && tip.x < dum.x + dum.w + 8 &&
+                tip.y > dum.y     && tip.y < dum.y + dum.h) {
+              dealDamage(this, dum, this.weapon.damage, this.weapon.kb);
+              this.weaponHit = true;
+              break;
+            }
+          }
         }
         // Weapon bounces off platform surfaces → sparks + recoil
         if (!this.weaponHit) {
@@ -498,7 +995,8 @@ class Fighter {
         const movingToward = (tgt.cx() > this.cx() && this.vx > 0.8) ||
                              (tgt.cx() < this.cx() && this.vx < -0.8);
         if (movingToward) {
-          dealDamage(this, tgt, Math.max(1, Math.floor(this.weapon.damage * 0.25)),
+          const contactMult = this.weapon.contactDmgMult !== undefined ? this.weapon.contactDmgMult : 0.25;
+          dealDamage(this, tgt, Math.max(1, Math.floor(this.weapon.damage * contactMult)),
                                 Math.floor(this.weapon.kb * 0.35));
           this.contactDamageCooldown = 32;
         }
@@ -507,31 +1005,137 @@ class Fighter {
 
     if (this.isAI && this.target) this.updateAI();
 
-    // Gravity + motion
-    this.vy += 0.65;
+    // Gravity + motion (arena-specific gravity)
+    const arenaGravity = currentArena.isLowGravity ? 0.28 : (currentArena.isHeavyGravity ? 0.95 : 0.65);
+    this.vy += arenaGravity;
     this.x  += this.vx;
     this.y  += this.vy;
 
     // Friction
-    this.vx *= this.onGround ? 0.80 : 0.94;
+    const friction = (this.onGround && currentArena.isIcy) ? 0.93 : (this.onGround ? 0.78 : 0.94);
+    this.vx *= friction;
     this.vx  = clamp(this.vx, -13, 13);
-    this.vy  = clamp(this.vy, -20, 19);
+    const vyMax = currentArena.isLowGravity ? 10 : 19;
+    this.vy  = clamp(this.vy, -20, vyMax);
 
     this.onGround = false;
     for (const pl of currentArena.platforms) this.checkPlatform(pl);
 
-    // Horizontal clamp (allow slight off-screen before death)
-    this.x = clamp(this.x, -80, canvas.width + 60);
+    // Horizontal clamp — boss arena has hard walls; other arenas allow slight off-screen
+    if (currentArena.isBossArena) {
+      if (this.x < 0)                        { this.x = 0;                        this.vx =  Math.abs(this.vx) * 0.25; }
+      if (this.x + this.w > canvas.width)    { this.x = canvas.width - this.w;    this.vx = -Math.abs(this.vx) * 0.25; }
+    } else {
+      this.x = clamp(this.x, -80, canvas.width + 60);
+    }
 
     // Death by falling / lava
-    const dyY = currentArena.hasLava ? currentArena.lavaY : currentArena.deathY;
-    if (this.y > dyY && this.health > 0) this.health = 0;
+    const dyY = currentArena.deathY;
+    // Lava burn: damage + bounce when feet touch lava surface
+    if (currentArena.hasLava && !this.isBoss && this.y + this.h > currentArena.lavaY && this.health > 0) {
+      this.lavaBurnTimer++;
+      if (this.vy > 0) {
+        this.vy = -20; // higher bounce
+        this.canDoubleJump = true; // refill double jump on lava bounce
+      }
+      this.vx *= 0.88;
+      // Apply immediate damage on first contact and every 6 frames thereafter
+      if (this.lavaBurnTimer === 1 || this.lavaBurnTimer % 6 === 0) {
+        this.health = Math.max(0, this.health - 8);
+        this.hurtTimer = 8;
+        if (settings.particles) spawnParticles(this.cx(), this.cy(), '#ff6600', 8);
+        if (settings.particles) spawnParticles(this.cx(), this.cy(), '#ffaa00', 5);
+        if (settings.screenShake) screenShake = Math.max(screenShake, 4);
+      }
+    } else {
+      this.lavaBurnTimer = 0;
+    }
+    // Hard death (fell off screen or health ran out from lava)
+    if (this.y > dyY && this.health > 0) {
+      if (this.isBoss) bossTeleport(this, true);
+      else this.health = 0;
+    }
 
     this.updateState();
 
     // Auto-face target
     if (this.target) this.facing = this.target.cx() > this.cx() ? 1 : -1;
     else if (Math.abs(this.vx) > 0.5) this.facing = this.vx > 0 ? 1 : -1;
+
+    if (this.godmode) { this.health = this.maxHealth; }
+
+    // Apply speed/power buffs from map perks
+    if (this._speedBuff > 0) this._speedBuff--;
+    if (this._powerBuff > 0) this._powerBuff--;
+
+    // ---- CLASS PASSIVE PERK (fires once per life at HP threshold) ----
+    if (!this.classPerkUsed && this.charClass !== 'none' && this.health > 0 && this.target) {
+      const pct = this.health / this.maxHealth;
+
+      // THOR: Lightning Storm at ≤20% HP — 3 lightning strikes on opponent
+      if (this.charClass === 'thor' && pct <= 0.20) {
+        this.classPerkUsed = true;
+        screenShake = Math.max(screenShake, 22);
+        spawnParticles(this.cx(), this.cy(), '#ffff00', 28);
+        spawnParticles(this.cx(), this.cy(), '#88ddff', 14);
+        const _t = this.target;
+        for (let _i = 0; _i < 3; _i++) {
+          setTimeout(() => {
+            if (!gameRunning || _t.health <= 0) return;
+            spawnParticles(_t.cx(), _t.cy(), '#ffff00', 22);
+            spawnParticles(_t.cx(), _t.cy(), '#ffffff', 12);
+            if (settings.screenShake) screenShake = Math.max(screenShake, 12);
+            _t.health = Math.max(0, _t.health - 8);
+            _t.hurtTimer = 10;
+            _t.stunTimer = Math.max(_t.stunTimer, 45);
+            if (settings.dmgNumbers) damageTexts.push(new DamageText(_t.cx(), _t.y, 8, '#ffff00'));
+          }, _i * 350);
+        }
+      }
+
+      // KRATOS: Spartan Rage at ≤15% HP — heals to 30% max HP + 5s damage boost
+      if (this.charClass === 'kratos' && pct <= 0.15) {
+        this.classPerkUsed = true;
+        const healTarget = Math.floor(this.maxHealth * 0.30);
+        const healAmt    = Math.max(0, healTarget - this.health);
+        this.health       = Math.max(this.health, healTarget);
+        this.spartanRageTimer = 300;
+        screenShake = Math.max(screenShake, 24);
+        spawnParticles(this.cx(), this.cy(), '#ff4400', 30);
+        spawnParticles(this.cx(), this.cy(), '#ff8800', 18);
+        spawnParticles(this.cx(), this.cy(), '#ffffff',  8);
+        if (healAmt > 0 && settings.dmgNumbers)
+          damageTexts.push(new DamageText(this.cx(), this.y - 20, healAmt, '#44ff44'));
+      }
+
+      // NINJA: Shadow Step at ≤25% HP — 2s invincibility + all cooldowns reset
+      if (this.charClass === 'ninja' && pct <= 0.25) {
+        this.classPerkUsed = true;
+        this.invincible = 120;
+        this.cooldown = 0; this.abilityCooldown = 0; this.shieldCooldown = 0; this.boostCooldown = 0;
+        screenShake = Math.max(screenShake, 14);
+        spawnParticles(this.cx(), this.cy(), '#44ff88', 30);
+        spawnParticles(this.cx(), this.cy(), '#ffffff', 14);
+      }
+
+      // GUNNER: Last Stand at ≤20% HP — 8 bullets burst in all directions
+      if (this.charClass === 'gunner' && pct <= 0.20) {
+        this.classPerkUsed = true;
+        screenShake = Math.max(screenShake, 26);
+        spawnParticles(this.cx(), this.cy(), '#ff6600', 28);
+        spawnParticles(this.cx(), this.cy(), '#ffaa00', 14);
+        for (let _j = 0; _j < 8; _j++) {
+          const _ang = (_j / 8) * Math.PI * 2;
+          const _spd = 11 + Math.random() * 3;
+          const _dmg = Math.floor(Math.random() * 3) + 3;
+          projectiles.push(new Projectile(
+            this.cx(), this.cy(),
+            Math.cos(_ang) * _spd, Math.sin(_ang) * _spd,
+            this, _dmg, '#ff4400'
+          ));
+        }
+      }
+    }
   }
 
   checkPlatform(pl) {
@@ -600,7 +1204,7 @@ class Fighter {
     const ang = this.facing > 0
       ? lerp(-0.45, 1.1,          atkP)
       : lerp(Math.PI + 0.45, Math.PI - 1.1, atkP);
-    const tipLens = { sword: 26, hammer: 30, axe: 22, spear: 38 };
+    const tipLens = { sword: 26, hammer: 30, axe: 22, spear: 38, gauntlet: 24 };
     const wLen    = tipLens[this.weaponKey] || 22;
     const reach   = armLen + wLen;
     return {
@@ -611,6 +1215,7 @@ class Fighter {
 
   // ---- ATTACK ----
   attack(target) {
+    if (this.backstageHiding) return;
     if (this.cooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
     if (this.weapon.type === 'melee') {
       // Damage is delivered via weapon-tip hitbox in update() — just start the swing
@@ -625,6 +1230,7 @@ class Fighter {
   }
 
   ability(target) {
+    if (this.backstageHiding) return;
     if (this.abilityCooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
     this.weapon.ability(this, target);
     this.abilityCooldown = this.weapon.abilityCooldown;
@@ -639,6 +1245,13 @@ class Fighter {
   }
 
   activateSuper(target) {
+    // Boss heals 5% of max HP (no max HP increase); players gain +20 max HP and heal 20
+    if (this.isBoss) {
+      // Boss no longer heals on super — super is purely offensive
+    } else {
+      this.maxHealth = Math.min(200, this.maxHealth + 20);
+      this.health    = Math.min(this.maxHealth, this.health + 20);
+    }
     this.superMeter  = 0;
     this.superReady  = false;
     screenShake      = Math.max(screenShake, 24);
@@ -662,7 +1275,7 @@ class Fighter {
         for (let i = 0; i < 14; i++) {
           setTimeout(() => {
             if (!gameRunning || this.health <= 0) return;
-            spawnBullet(this, 14 + (Math.random() - 0.5) * 4, '#ff8800');
+            spawnBullet(this, 14 + (Math.random() - 0.5) * 4, '#ff8800', Math.floor(Math.random() * 4) + 9);
           }, i * 50);
         }
       },
@@ -674,6 +1287,20 @@ class Fighter {
         this.vx = this.facing * 22;
         this.vy = -10;
         if (dist(this, target) < 230) dealDamage(this, target, 50, 24);
+      },
+      gauntlet: () => {
+        screenShake = Math.max(screenShake, 60);
+        spawnRing(this.cx(), this.cy());
+        spawnRing(this.cx(), this.cy());
+        spawnRing(this.cx(), this.cy());
+        for (const p of players) {
+          if (p === this || p.health <= 0) continue;
+          if (dist(this, p) < 280) dealDamage(this, p, 15, 50);
+        }
+        for (const d of trainingDummies) {
+          if (d.health <= 0) continue;
+          if (dist(this, d) < 280) dealDamage(this, d, 15, 50);
+        }
       }
     };
     (superMoves[this.weaponKey] || superMoves.sword)();
@@ -716,9 +1343,9 @@ class Fighter {
     const d  = Math.abs(dx);
     const dir = dx > 0 ? 1 : -1;
 
-    const spd     = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 3.6 : 4.8;
-    const atkFreq = this.aiDiff === 'easy' ? 0.04 : this.aiDiff === 'medium' ? 0.09 : 0.16;
-    const abiFreq = this.aiDiff === 'easy' ? 0.004 : this.aiDiff === 'medium' ? 0.012 : 0.024;
+    const spd     = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+    const atkFreq = this.aiDiff === 'easy' ? 0.04 : this.aiDiff === 'medium' ? 0.16 : 0.28;
+    const abiFreq = this.aiDiff === 'easy' ? 0.004 : this.aiDiff === 'medium' ? 0.022 : 0.04;
 
     // ---- DANGER: near lava / death zone ----
     if (currentArena.hasLava) {
@@ -742,6 +1369,21 @@ class Fighter {
         }
         return;
       }
+    }
+
+    // Use super immediately when health is critical and super is ready
+    if (this.health < 40 && this.superReady) { this.useSuper(t); }
+
+    // Better platform recovery — steer toward nearest platform when falling off-screen
+    if (this.y > 350 && !this.onGround) {
+      let nearestX = canvas.width / 2;
+      let nearestDist = Infinity;
+      for (const pl of currentArena.platforms) {
+        if (pl.isFloorDisabled) continue;
+        const pdx = Math.abs(pl.x + pl.w / 2 - this.cx());
+        if (pdx < nearestDist) { nearestDist = pdx; nearestX = pl.x + pl.w / 2; }
+      }
+      this.vx = nearestX > this.cx() ? spd * 1.8 : -spd * 1.8;
     }
 
     // ---- STATE MACHINE ----
@@ -774,13 +1416,16 @@ class Fighter {
         if (this.onGround && t.y + t.h < this.y - 50 && Math.random() < 0.04 &&
             !edgeDanger && (!currentArena.hasLava || this.platformAbove()))
           this.vy = -17;
+        // Jump to chase airborne target more often
+        if (this.onGround && !t.onGround && Math.random() < 0.06 && !edgeDanger)
+          this.vy = -17;
         break;
 
       case 'attack':
         this.vx *= 0.72;
         if (Math.random() < atkFreq) this.attack(t);
         if (Math.random() < abiFreq) this.ability(t);
-        if (this.superReady && Math.random() < 0.06) this.useSuper(t);
+        if (this.superReady && Math.random() < 0.12) this.useSuper(t);
         // Small hop to stay on target's level
         if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.02)
           this.vy = -15;
@@ -807,22 +1452,34 @@ class Fighter {
       for (const pr of projectiles) {
         if (pr.owner !== this) {
           const pd = Math.hypot(pr.x - this.cx(), pr.y - this.cy());
-          if (pd < 105 && this.onGround && !this.isEdgeDanger(pr.vx > 0 ? -1 : 1) && Math.random() < 0.16)
-            this.vy = -16;
+          if (pd < 130 && !this.isEdgeDanger(pr.vx > 0 ? -1 : 1) && Math.random() < 0.30) {
+            if (this.onGround) this.vy = -16;
+            else if (this.canDoubleJump) { this.vy = -13; this.canDoubleJump = false; }
+          }
         }
       }
     }
 
     // Reaction lag for lower difficulties
-    if (this.aiDiff === 'easy'   && Math.random() < 0.10) this.aiReact = 10;
-    if (this.aiDiff === 'medium' && Math.random() < 0.05) this.aiReact =  5;
+    if (this.aiDiff === 'easy'   && Math.random() < 0.08) this.aiReact = 8;
+    if (this.aiDiff === 'medium' && Math.random() < 0.03) this.aiReact = 3;
   }
 
   // ---- DRAW ----
   draw() {
+    if (this.backstageHiding) return;
     if (this.health <= 0 && this.invincible < 90) return;
 
     ctx.save();
+
+    // Scale transform for oversized fighters (e.g., boss)
+    if (this.drawScale && this.drawScale !== 1) {
+      const pivX = this.cx();
+      const pivY = this.y;
+      ctx.translate(pivX, pivY);
+      ctx.scale(this.drawScale, this.drawScale);
+      ctx.translate(-pivX, -pivY);
+    }
 
     // Invincibility blink
     if (this.invincible > 0 && Math.floor(this.invincible / 5) % 2 === 1) {
@@ -935,10 +1592,10 @@ class Fighter {
     ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(rEx, rEy); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(lEx, lEy); ctx.stroke();
 
-    // WEAPON in right hand (+ left hand for boss)
+    // WEAPON in right hand (boss draws gauntlet on both hands for visual flair)
     this.drawWeapon(rEx, rEy, rAng, s === 'attacking');
-    if (this.isBoss && this.weapon2Key) {
-      this.drawWeapon(lEx, lEy, lAng + Math.PI, s === 'attacking', this.weapon2Key);
+    if (this.isBoss && this.weaponKey === 'gauntlet') {
+      this.drawWeapon(lEx, lEy, lAng + Math.PI, s === 'attacking', 'gauntlet');
     }
 
     // LEGS
@@ -1066,6 +1723,36 @@ class Fighter {
       ctx.closePath();
       ctx.fillStyle = '#aaaaff';
       ctx.fill();
+
+    } else if (k === 'gauntlet') {
+      // Large dark-energy fist/gauntlet around the hand
+      ctx.save();
+      ctx.shadowColor = '#bb00ff';
+      ctx.shadowBlur  = 14;
+      // Main gauntlet body
+      ctx.fillStyle   = '#7700cc';
+      ctx.beginPath();
+      ctx.roundRect(-10, -10, 26, 20, 5);
+      ctx.fill();
+      // Bright outline
+      ctx.strokeStyle = '#bb00ff';
+      ctx.lineWidth   = 2;
+      ctx.stroke();
+      // Knuckle arcs
+      ctx.fillStyle = '#9900ee';
+      for (let ki = 0; ki < 3; ki++) {
+        ctx.beginPath();
+        ctx.arc(2 + ki * 6, -10, 4, Math.PI, 0);
+        ctx.fill();
+      }
+      // Energy glow core
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle   = '#ee88ff';
+      ctx.beginPath();
+      ctx.arc(5, 0, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
     ctx.restore();
@@ -1073,65 +1760,257 @@ class Fighter {
 }
 
 // ============================================================
-// BOSS  (special Fighter — 3× HP, 2 weapons, ½ cooldowns)
+// MINION  (lightweight boss-spawned enemy)
+// ============================================================
+class Minion extends Fighter {
+  constructor(x, y) {
+    const wKey = Math.random() < 0.5 ? 'axe' : 'sword';
+    super(x, y, '#bb00ee', wKey,
+      { left:null, right:null, jump:null, attack:null, ability:null, super:null },
+      true, 'hard');
+    this.name      = 'MINION';
+    this.isMinion  = true;
+    this.w         = 32;
+    this.h         = 62;
+    this.health    = 25;
+    this.maxHealth = 25;
+    this.lives     = 1;
+    this.dmgMult   = 0.10; // deals 10% damage
+    this.spawnX    = x;
+    this.spawnY    = y;
+    this.playerNum = 2;
+  }
+
+  // Minions never super
+  useSuper() {}
+  activateSuper() {}
+
+  // Flat respawn override — minions just die, no countdown
+  respawn() { this.health = 0; }
+}
+
+// ============================================================
+// DUMMY  (training-mode target — stands still, auto-heals)
+// ============================================================
+class Dummy extends Fighter {
+  constructor(x, y) {
+    super(x, y, '#888888', 'sword',
+      { left:null, right:null, jump:null, attack:null, ability:null, super:null },
+      false);
+    this.name     = 'DUMMY';
+    this.isDummy  = true;
+    this.health   = 200;
+    this.maxHealth = 200;
+    this.lives    = 999;
+    this.spawnX   = x;
+    this.spawnY   = y;
+  }
+
+  update() {
+    // Timers
+    if (this.cooldown > 0)         this.cooldown--;
+    if (this.invincible > 0)       this.invincible--;
+    if (this.hurtTimer > 0)        this.hurtTimer--;
+    if (this.stunTimer > 0)        this.stunTimer--;
+    if (this.ragdollTimer > 0) {
+      this.ragdollTimer--;
+      this.ragdollAngle += this.ragdollSpin;
+      this.ragdollSpin  *= 0.97;
+    } else {
+      this.ragdollAngle = 0;
+      this.ragdollSpin  = 0;
+    }
+    // Gravity + minimal physics
+    this.vy += 0.65;
+    this.x  += this.vx;
+    this.y  += this.vy;
+    this.vx *= 0.80;
+    this.vy  = clamp(this.vy, -20, 19);
+    this.onGround = false;
+    for (const pl of currentArena.platforms) this.checkPlatform(pl);
+    // Auto-reset if falls off
+    if (this.y > 640) { this.x = this.spawnX; this.y = this.spawnY - 60; this.vy = 0; this.health = this.maxHealth; }
+    // Auto-heal when health hits 0
+    if (this.health <= 0) {
+      this.health = this.maxHealth;
+      this.invincible = 120;
+      spawnParticles(this.cx(), this.cy(), this.color, 12);
+    }
+    this.animTimer++;
+    this.updateState();
+  }
+
+  respawn() { this.health = this.maxHealth; }
+  useSuper() {}
+  activateSuper() {}
+  updateAI() {}
+}
+
+// ============================================================
+// TRAINING COMMANDS
+// ============================================================
+function trainingCmd(cmd) {
+  if (!gameRunning || !trainingMode) return;
+  const p = players[0];
+  if (!p) return;
+  if (cmd === 'giveSuper')   { p.superMeter = 100; p.superReady = true; p.superFlashTimer = 90; }
+  if (cmd === 'noCooldowns') {
+    p.noCooldownsActive = !p.noCooldownsActive;
+    if (p.noCooldownsActive) { p.cooldown = 0; p.cooldown2 = 0; p.abilityCooldown = 0; p.abilityCooldown2 = 0; p.shieldCooldown = 0; p.boostCooldown = 0; }
+  }
+  if (cmd === 'fullHealth')  { p.health = p.maxHealth; }
+  if (cmd === 'spawnDummy') {
+    const x = 200 + Math.random() * 500;
+    const d = new Dummy(x, 300);
+    trainingDummies.push(d);
+  }
+  if (cmd === 'spawnBot') {
+    const x   = Math.random() < 0.5 ? 160 : 720;
+    const wKey = randChoice(WEAPON_KEYS);
+    const bot  = new Fighter(x, 300, '#ff8800', wKey,
+      { left:null, right:null, jump:null, attack:null, ability:null, super:null },
+      true, 'hard');
+    bot.name = 'BOT'; bot.lives = 1; bot.spawnX = x; bot.spawnY = 300;
+    bot.target = p; bot.playerNum = 2;
+    trainingDummies.push(bot);
+  }
+  if (cmd === 'clearEnemies') { trainingDummies = []; }
+  if (cmd === 'godmode') { p.godmode = !p.godmode; }
+  if (cmd === 'spawnBoss') {
+    const bossX = 450, bossY = 200;
+    const tb = new Fighter(bossX, bossY, '#cc00ee', 'hammer',
+      { left:null, right:null, jump:null, attack:null, ability:null, super:null },
+      true, 'hard');
+    tb.name      = 'CREATOR';  tb.lives    = 1;
+    tb.spawnX    = bossX;      tb.spawnY   = bossY;
+    tb.health    = 2000;       tb.maxHealth = 2000;
+    tb.w         = 33;         tb.h        = 90;
+    tb.kbResist  = 0.5;        tb.kbBonus  = 1.5;
+    tb.target    = p;          tb.playerNum = 2;
+    trainingDummies.push(tb);
+  }
+  if (cmd === 'onePunch') {
+    p.onePunchMode = !p.onePunchMode;
+  }
+}
+
+function applyClass(fighter, classKey) {
+  const cls = CLASSES[classKey || 'none'];
+  if (!cls || classKey === 'none') return;
+  fighter.charClass       = classKey;
+  fighter.maxHealth       = cls.hp;
+  fighter.health          = cls.hp;
+  fighter.classSpeedMult  = cls.speedMult;
+  if (cls.weapon) {
+    fighter.weaponKey = cls.weapon;
+    fighter.weapon    = WEAPONS[cls.weapon];
+  }
+}
+
+function updateClassWeapon(player) {
+  const clsKey = document.getElementById(player + 'Class').value;
+  const cls    = CLASSES[clsKey];
+  const wEl    = document.getElementById(player + 'Weapon');
+  if (cls && cls.weapon) {
+    wEl.value    = cls.weapon;
+    wEl.disabled = true;
+  } else {
+    wEl.disabled = false;
+  }
+  showDesc(player, 'class', clsKey);
+}
+
+function showDesc(player, type, key) {
+  const data  = type === 'weapon' ? WEAPON_DESCS[key] : CLASS_DESCS[key];
+  const panel = document.getElementById(player + 'Desc');
+  const title = document.getElementById(player + 'DescTitle');
+  const body  = document.getElementById(player + 'DescBody');
+  if (!panel || !title || !body) return;
+  if (!data || key === 'none' || key === 'random') {
+    panel.style.display = 'none';
+    return;
+  }
+  title.textContent = data.title;
+  let html = `<span class="desc-what">${data.what}</span>`;
+  if (data.ability) html += `<br><span class="desc-ability">\u2694\ufe0f ${data.ability}</span>`;
+  if (data.super)   html += `<br><span class="desc-super">\u2728 ${data.super}</span>`;
+  if (data.perk)    html += `<br><span class="desc-perk">${data.perk}</span>`;
+  html += `<br><span class="desc-tip">\ud83d\udca1 ${data.how}</span>`;
+  // Randomizer toggle
+  const inPool = type === 'weapon'
+    ? (!randomWeaponPool || randomWeaponPool.has(key))
+    : (!randomClassPool  || randomClassPool.has(key));
+  html += `<br><button id="randBtn_${type}_${key}" class="rand-toggle-btn"
+    onclick="toggleRandomPool('${type}','${key}')"
+    style="margin-top:6px;padding:3px 10px;border-radius:6px;border:1px solid rgba(255,255,255,0.2);cursor:pointer;font-size:11px;background:${inPool ? 'rgba(0,200,100,0.25)' : 'rgba(200,50,50,0.25)'}">
+    ${inPool ? '\u2713 In Random Pool' : '\u2717 Excluded'}</button>`;
+  body.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+// ============================================================
+// BOSS  (special Fighter — 3× HP, gauntlet weapon, ½ cooldowns)
 // ============================================================
 class Boss extends Fighter {
   constructor() {
     const noCtrl = { left:null, right:null, jump:null, attack:null, ability:null, super:null };
-    super(450, 200, '#cc00ee', 'axe', noCtrl, true, 'hard');
-    this.name          = 'CREATOR';
-    this.health        = 300;
-    this.maxHealth     = 300;
-    this.w             = 28;
-    this.h             = 70;
-    this.isBoss        = true;
-    this.lives         = 1;
-    this.spawnX        = 450;
-    this.spawnY        = 200;
-    this.playerNum     = 2;
-    // Second weapon (ranged complement)
-    this.baseWeaponKey = 'axe';
-    this.weapon2Key    = 'gun';
-    this.weapon2       = WEAPONS['gun'];
-    this.useWeapon2    = false;  // alternates each attack
+    super(450, 200, '#cc00ee', 'gauntlet', noCtrl, true, 'hard');
+    this.name           = 'CREATOR';
+    this.health         = 2000;
+    this.maxHealth      = 2000;
+    this.w              = 33;   // double Fighter hitbox width
+    this.h              = 90;  // double Fighter hitbox height
+    this.drawScale      = 1.5;    // visual 2× scale in draw()
+    this.isBoss         = true;
+    this.lives          = 1;
+    this.spawnX         = 450;
+    this.spawnY         = 200;
+    this.playerNum      = 2;
+    // Boss combat modifiers
+    this.kbResist       = 0.5;  // takes half knockback
+    this.kbBonus        = 1.5;  // deals 1.5x knockback
+    this.attackCooldownMult = 0.5;
+    this.superChargeRate = 1.7;   // charges super 1.7× faster
+    // Gauntlet weapon (single weapon only)
+    this.weaponKey      = 'gauntlet';
+    this.weapon         = WEAPONS['gauntlet'];
+    // Minion spawning
+    this.minionCooldown = 600;  // frames until first spawn (~10 s)
+    // Beam attacks
+    this.beamCooldown   = 900;  // frames until first beam (~15 s)
+    // Teleport
+    this.teleportCooldown = 0;
+    this.teleportMaxCd    = 900;
+    this.postTeleportCrit = 0;
+    this.forcedTeleportFlash = 0;
+    // Spike attacks
+    this.spikeCooldown  = 1200; // 20 seconds initial
+    // Monologue tracking
+    this.phaseDialogueFired = new Set();
+    this._maxLives          = 1; // boss shows phase indicator, not hearts
   }
 
   getPhase() {
-    if (this.health > 200) return 1;
-    if (this.health > 100) return 2;
-    return 3;
+    if (this.health > 1334) return 1;   // > 66% HP
+    if (this.health > 667)  return 2;   // 33–66% HP
+    return 3;                            // < 33% HP
   }
 
-  // Override attack: alternates weapons, half cooldowns
+  // Override attack: gauntlet melee only, half cooldowns
   attack(target) {
-    const usingW2 = this.useWeapon2;
-    const w       = usingW2 ? this.weapon2 : WEAPONS[this.baseWeaponKey];
-    const wKey    = usingW2 ? this.weapon2Key : this.baseWeaponKey;
-    const cd      = usingW2 ? this.cooldown2 : this.cooldown;
-    if (cd > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
-
-    this.weapon    = w;
-    this.weaponKey = wKey;
-
-    if (w.type === 'melee') {
-      if (dist(this, target) < w.range * 1.4) this.weaponHit = false;
-    } else {
-      spawnBullet(this, 14, '#ff8800');
-    }
-
-    const halfCd = Math.max(1, Math.ceil(w.cooldown * 0.5));
-    if (usingW2) this.cooldown2 = halfCd;
-    else         this.cooldown  = halfCd;
-
+    if (this.backstageHiding) return;
+    if (this.cooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+    // Gauntlet is melee-only — start swing, damage delivered via weapon-tip hitbox
+    if (dist(this, target) < this.weapon.range * 1.4) this.weaponHit = false;
+    this.cooldown    = Math.max(1, Math.ceil(this.weapon.cooldown * (this.attackCooldownMult || 0.5)));
     this.attackTimer = this.attackDuration;
-    this.useWeapon2  = !this.useWeapon2;
   }
 
   // Override ability: half cooldown
   ability(target) {
     if (this.abilityCooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
     this.weapon.ability(this, target);
-    this.abilityCooldown = Math.max(1, Math.ceil(this.weapon.abilityCooldown * 0.5));
+    this.abilityCooldown = Math.max(1, Math.ceil(this.weapon.abilityCooldown * (this.attackCooldownMult || 0.5)));
     this.attackTimer     = this.attackDuration * 2;
   }
 
@@ -1140,10 +2019,26 @@ class Boss extends Fighter {
     if (this.aiReact > 0) { this.aiReact--; return; }
     if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
 
+    // In 2P boss mode, always target the nearest alive human player
+    if (gameMode === 'boss2p') {
+      let nearDist = Infinity, nearP = null;
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const d2 = dist(this, p);
+        if (d2 < nearDist) { nearDist = d2; nearP = p; }
+      }
+      if (nearP) this.target = nearP;
+    }
+
     const phase   = this.getPhase();
-    const spd     = 3.8 + (3 - phase) * 0.5;
-    const atkFreq = 0.10 + (3 - phase) * 0.07;
-    const abiFreq = 0.016 + (3 - phase) * 0.010;
+    // Phase-based stats
+    const spd     = phase === 3 ? 5.5 : phase === 2 ? 4.5 : 3.8;
+    const atkFreq = phase === 3 ? 0.30 : phase === 2 ? 0.20 : 0.13;
+    const abiFreq = phase === 3 ? 0.05 : phase === 2 ? 0.035 : 0.018;
+
+    // Count down post-teleport crit window
+    if (this.postTeleportCrit > 0) this.postTeleportCrit--;
+    if (this.forcedTeleportFlash > 0) this.forcedTeleportFlash--;
 
     const t  = this.target;
     if (!t || t.health <= 0) return;
@@ -1181,16 +2076,34 @@ class Boss extends Fighter {
       return;
     }
 
-    // State machine
-    if (d < this.weapon.range + 30) this.aiState = 'attack';
-    else if (this.health < 80 && d > 130 && Math.random() < 0.010) this.aiState = 'evade';
+    // State machine — boss stays in attack range more aggressively
+    if (d < this.weapon.range + 50) this.aiState = 'attack';
+    else if (this.health < 100 && d > 160 && Math.random() < 0.008) this.aiState = 'evade';
     else this.aiState = 'chase';
 
-    // Reactive shield (respects cooldown)
-    if (t.attackTimer > 0 && d < 130 && this.shieldCooldown === 0 && Math.random() < 0.30) {
-      this.shielding = true;
-      this.shieldCooldown = Math.ceil(SHIELD_CD * 0.5);
-      setTimeout(() => { this.shielding = false; }, 300);
+    // Reactive shield (respects cooldown) — responds to both attacks AND incoming bullets
+    if (this.shieldCooldown === 0) {
+      const incomingBullet = projectiles.some(pr =>
+        pr.owner !== this && Math.hypot(pr.x - this.cx(), pr.y - this.cy()) < 160 &&
+        ((pr.vx > 0 && pr.x < this.cx()) || (pr.vx < 0 && pr.x > this.cx()))
+      );
+      if ((t.attackTimer > 0 && d < 150) || incomingBullet) {
+        if (Math.random() < (phase === 3 ? 0.55 : 0.35)) {
+          this.shielding = true;
+          this.shieldCooldown = Math.ceil(SHIELD_CD * 0.5);
+          setTimeout(() => { this.shielding = false; }, 350);
+        }
+      }
+    }
+
+    // Dodge bullets by jumping
+    for (const pr of projectiles) {
+      if (pr.owner === this) continue;
+      const pd = Math.hypot(pr.x - this.cx(), pr.y - this.cy());
+      if (pd < 130 && this.onGround && Math.random() < (phase >= 2 ? 0.35 : 0.20)) {
+        this.vy = -18;
+        break;
+      }
     }
 
     const edgeDanger = this.isEdgeDanger(dir);
@@ -1198,30 +2111,265 @@ class Boss extends Fighter {
     switch (this.aiState) {
       case 'chase':
         if (!edgeDanger) this.vx = dir * spd;
-        else { this.vx = 0; if (this.onGround && this.platformAbove() && Math.random() < 0.06) this.vy = -17; }
-        if (this.onGround && t.y + t.h < this.y - 50 && !edgeDanger && Math.random() < 0.05) this.vy = -17;
+        else { this.vx = 0; if (this.onGround && this.platformAbove() && Math.random() < 0.10) this.vy = -18; }
+        // Jump toward target on platforms above
+        if (this.onGround && t.y + t.h < this.y - 40 && !edgeDanger && Math.random() < 0.07) this.vy = -19;
         break;
       case 'attack':
-        this.vx *= 0.72;
-        if (Math.random() < atkFreq) this.attack(t);
-        if (Math.random() < abiFreq) this.ability(t);
-        if (this.superReady && Math.random() < 0.08) this.useSuper(t);
-        if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.03) this.vy = -15;
+        this.vx *= 0.75;
+        if (Math.random() < atkFreq)       this.attack(t);
+        if (Math.random() < abiFreq)       this.ability(t);
+        if (this.superReady && Math.random() < (phase === 3 ? 0.15 : 0.10)) this.useSuper(t);
+        if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.05) this.vy = -17;
         break;
       case 'evade': {
         const eDir  = -dir;
         const eEdge = this.isEdgeDanger(eDir);
-        if (!eEdge) this.vx = eDir * spd;
-        else if (Math.random() < atkFreq) this.attack(t);
-        if (Math.random() < atkFreq * 0.4) this.attack(t);
+        if (!eEdge) this.vx = eDir * spd * 1.2;
+        else if (Math.random() < atkFreq)  this.attack(t);
+        if (Math.random() < atkFreq * 0.5) this.attack(t);
         break;
       }
     }
 
-    // Phase 3 bonus aggression
-    if (phase === 3 && this.onGround && !edgeDanger && Math.random() < 0.025) this.vy = -16;
+    // Phase 3 bonus: aggressive jumps + burst attacks
+    if (phase === 3) {
+      if (this.onGround && !edgeDanger && Math.random() < 0.030) this.vy = -17;
+      if (Math.random() < 0.035) this.attack(t);
+    }
 
-    if (Math.random() < 0.04) this.aiReact = 3;
+    // Teleport (phase 2+)
+    if (phase >= 2) {
+      if (this.teleportCooldown > 0) {
+        this.teleportCooldown--;
+      } else {
+        if (!this.backstageHiding) bossTeleport(this);
+        this.teleportCooldown = phase === 3 ? 600 : 900;
+      }
+    }
+
+    // Ability more often when target is close
+    if (t && dist(this, t) < 120 && Math.random() < 0.06) this.ability(t);
+
+    // Boss leads attacks when player moves toward it
+    if (t && t.vx !== 0) {
+      const playerMovingToward = (t.cx() < this.cx() && t.vx > 0) || (t.cx() > this.cx() && t.vx < 0);
+      if (playerMovingToward && dist(this, t) < this.weapon.range * 2 && Math.random() < 0.15) {
+        this.attack(t);
+      }
+    }
+
+    // Spike attacks
+    if (this.spikeCooldown > 0) {
+      this.spikeCooldown--;
+    } else if (phase >= 2 && t) {
+      const numSpikes = 5;
+      for (let i = 0; i < numSpikes; i++) {
+        const sx = clamp(t.cx() + (i - 2) * 35, 20, 880);
+        bossSpikes.push({ x: sx, maxH: 90 + Math.random() * 50, h: 0, phase: 'rising', stayTimer: 0, done: false });
+      }
+      this.spikeCooldown = phase === 3 ? 480 : 720;
+      showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!']));
+    }
+
+    // Minion spawning (up to 2 at a time, every ~15 s, not on phase 1)
+    if (this.minionCooldown > 0) {
+      this.minionCooldown--;
+    } else if (phase >= 2 && minions.filter(m => m.health > 0).length < 2) {
+      const spawnX = Math.random() < 0.5 ? 60 : 840;
+      const spawnY = 200;
+      const mn     = new Minion(spawnX, spawnY);
+      mn.target    = players[0];
+      minions.push(mn);
+      spawnParticles(spawnX, spawnY, '#bb00ee', 24);
+      if (settings.screenShake) screenShake = Math.max(screenShake, 12);
+      this.minionCooldown = 60 * (phase === 3 ? 10 : 15);
+      showBossDialogue(randChoice(['Deal with my guests!', 'MINIONS, arise!', 'Handle this!', 'You\'ll need backup...']));
+    }
+
+    // Beam attacks — summons floor beams with 5-second warning (phase 2+)
+    if (this.beamCooldown > 0) {
+      this.beamCooldown--;
+    } else if (phase >= 2 && t) {
+      const numBeams = phase === 3 ? 3 : 2;
+      for (let i = 0; i < numBeams; i++) {
+        const spread = (i - Math.floor(numBeams / 2)) * 95;
+        const bx = clamp(t.cx() + spread + (Math.random() - 0.5) * 70, 40, 860);
+        bossBeams.push({ x: bx, warningTimer: 300, activeTimer: 0, phase: 'warning', done: false });
+      }
+      this.beamCooldown = phase === 3 ? 400 : 560;
+      showBossDialogue(randChoice(['Nowhere to hide!', 'Feel the void!', 'Dodge THIS!', 'From below!', 'The light will take you!']));
+    }
+
+    // HP-threshold monologue (fires once per threshold crossing)
+    const hpLines = [
+      { hp: 1999, text: 'I have taught you everything you know, but not everything I know, bring it on!' },
+      { hp: 1750, text: 'Ha. You tickle.' },
+      { hp: 1500, text: 'Interesting... you\'re persistent.' },
+      { hp: 1334, text: 'I\'m just warming up.' },
+      { hp: 1000, text: 'Fine. No more holding back!' },
+      { hp: 667,  text: 'You\'re stronger than I thought...' },
+      { hp: 400,  text: 'Impossible... HOW?!' },
+      { hp: 150,  text: 'I... WILL NOT... FALL HERE!' },
+    ];
+    for (const { hp, text } of hpLines) {
+      if (this.health <= hp && !this.phaseDialogueFired.has(hp)) {
+        this.phaseDialogueFired.add(hp);
+        showBossDialogue(text, 280);
+        break; // one at a time
+      }
+    }
+
+    if (Math.random() < 0.025) this.aiReact = 2; // tighter reaction window than base AI
+  }
+}
+
+// ============================================================
+// BACKSTAGE PORTAL HELPERS
+// ============================================================
+function openBackstagePortal(cx, cy, type) {
+  const words = ['if','for','let','const','function','return','true','false','null',
+                 '&&','||','=>','{','}','()','0','1','new','this','class','extends',
+                 'import','export','while','switch','break','typeof','void'];
+  const chars = [];
+  for (let _i = 0; _i < 35; _i++) {
+    chars.push({
+      x:     (Math.random() * 90) - 45,
+      y:     (Math.random() * 160) - 80,
+      char:  words[Math.floor(Math.random() * words.length)],
+      speed: 0.6 + Math.random() * 1.8,
+      alpha: 0.35 + Math.random() * 0.55,
+      color: ['#00ff88','#00cc66','#88ffaa','#44ff00','#aaffaa','#ffffff'][Math.floor(Math.random()*6)]
+    });
+  }
+  backstagePortals.push({ x: cx, y: cy, type, phase: 'opening', timer: 0, radius: 0, maxRadius: 58, codeChars: chars, done: false });
+}
+
+function drawBackstagePortals() {
+  for (const bp of backstagePortals) {
+    if (bp.done) continue;
+    bp.timer++;
+    if (bp.phase === 'opening') {
+      bp.radius = bp.maxRadius * Math.min(1, (bp.timer / 35) * (bp.timer / 35) * 2);
+      if (bp.timer >= 35) bp.phase = 'open';
+    } else if (bp.phase === 'open') {
+      bp.radius = bp.maxRadius;
+    } else if (bp.phase === 'closing') {
+      bp.radius = Math.max(0, bp.radius - 2.8);
+      if (bp.radius <= 0) { bp.done = true; continue; }
+    }
+    const rw = bp.radius * 0.55;
+    const rh = bp.radius;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(bp.x, bp.y, Math.max(0.1, rw), Math.max(0.1, rh), 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#000008';
+    ctx.fill();
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(bp.x, bp.y, Math.max(0.1, rw - 2), Math.max(0.1, rh - 2), 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    for (const c of bp.codeChars) {
+      c.y += c.speed;
+      if (c.y > rh + 14) c.y = -rh - 14;
+      ctx.globalAlpha = c.alpha * (bp.radius / bp.maxRadius);
+      ctx.fillStyle   = c.color;
+      ctx.fillText(c.char, bp.x + c.x - 28, bp.y + c.y);
+    }
+    ctx.restore();
+    ctx.globalAlpha = bp.radius / bp.maxRadius;
+    ctx.strokeStyle = '#cc00ff';
+    ctx.lineWidth   = 3.5;
+    ctx.shadowColor = '#9900ee';
+    ctx.shadowBlur  = 22;
+    ctx.beginPath();
+    ctx.ellipse(bp.x, bp.y, Math.max(0.1, rw), Math.max(0.1, rh), 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(200,0,255,0.4)';
+    ctx.lineWidth   = 1;
+    ctx.shadowBlur  = 8;
+    for (let _i = 0; _i < 3; _i++) {
+      const _sa = (frameCount * 0.04 + _i * 2.1) % (Math.PI * 2);
+      ctx.beginPath();
+      ctx.arc(bp.x, bp.y, rw * (0.35 + _i * 0.18), _sa, _sa + Math.PI * 1.3);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  backstagePortals = backstagePortals.filter(bp => !bp.done);
+}
+
+// ============================================================
+// BOSS TELEPORT
+// ============================================================
+function bossTeleport(boss, isForced = false) {
+  if (!currentArena) return;
+  const validPlatforms = currentArena.platforms.filter(pl => !pl.isFloor && !pl.isFloorDisabled);
+  let target = validPlatforms.length > 0 ? randChoice(validPlatforms)
+    : currentArena.platforms.find(pl => !pl.isFloorDisabled);
+
+  let destX, destY;
+  if (target) {
+    destX = clamp(target.x + target.w / 2 - boss.w / 2, 0, canvas.width - boss.w);
+    destY = target.y - boss.h - 2;
+  } else {
+    destX = canvas.width / 2 - boss.w / 2;
+    destY = 200;
+  }
+
+  const oldX = boss.cx();
+  const oldY = boss.cy();
+
+  if (!isForced) {
+    // === BACKSTAGE PORTAL TELEPORT (3-second animation) ===
+    openBackstagePortal(oldX, oldY, 'entry');
+    boss.backstageHiding = true;
+    boss.invincible      = 9999;
+    boss.teleportCooldown = 900;
+    boss.vx = 0;
+    boss.vy = 0;
+
+    // t=1.5s: open exit portal at destination
+    setTimeout(() => {
+      if (!gameRunning) return;
+      openBackstagePortal(destX + boss.w / 2, destY + boss.h / 2, 'exit');
+    }, 1500);
+
+    // t=2.5s: boss reappears
+    setTimeout(() => {
+      if (!gameRunning) return;
+      boss.x = destX;
+      boss.y = destY;
+      boss.vx = 0;
+      boss.vy = 0;
+      boss.backstageHiding = false;
+      boss.invincible      = 60;
+      boss.postTeleportCrit = 60;
+      showBossDialogue(randChoice(['Now you see me...', 'Try to follow me!', 'Blink!', 'You\'re too slow!']));
+      // Close entry portal
+      setTimeout(() => {
+        for (const bp of backstagePortals) { if (bp.type === 'entry' && bp.phase === 'open') bp.phase = 'closing'; }
+      }, 500);
+      // Close exit portal
+      setTimeout(() => {
+        for (const bp of backstagePortals) { if (bp.type === 'exit'  && bp.phase === 'open') bp.phase = 'closing'; }
+      }, 1200);
+    }, 2500);
+
+  } else {
+    // Forced teleport: instant (falling into hazard)
+    boss.x = destX;
+    boss.y = destY;
+    boss.vx = 0;
+    boss.vy = 0;
+    spawnParticles(oldX, oldY, '#9900ee', 18);
+    spawnParticles(oldX, oldY, '#cc00ff', 10);
+    spawnParticles(boss.cx(), boss.cy(), '#9900ee', 18);
+    spawnParticles(boss.cx(), boss.cy(), '#cc00ff', 10);
+    boss.forcedTeleportFlash = 20;
+    showBossDialogue('You really thought I would go down that easily?', 300);
   }
 }
 
@@ -1269,6 +2417,9 @@ function drawBackground() {
   if (currentArenaKey === 'lava')    drawLava();
   if (currentArenaKey === 'city')    drawCityBuildings();
   if (currentArenaKey === 'creator') drawCreatorArena();
+  if (currentArenaKey === 'forest')  drawForest();
+  if (currentArenaKey === 'ice')     drawIce();
+  if (currentArenaKey === 'ruins')   drawRuins();
 }
 
 function drawCreatorArena() {
@@ -1306,6 +2457,21 @@ function drawCreatorArena() {
     ctx.fillRect(0, ly - 10, canvas.width, 12);
     ctx.shadowBlur  = 0;
   }
+
+  // Invisible walls — glowing neon energy barriers on left and right
+  const wallPulse = 0.35 + Math.abs(Math.sin(frameCount * 0.04)) * 0.45;
+  ctx.save();
+  for (const wallX of [0, canvas.width]) {
+    const grad = ctx.createLinearGradient(
+      wallX === 0 ? 0 : canvas.width - 14, 0,
+      wallX === 0 ? 14 : canvas.width, 0
+    );
+    grad.addColorStop(0, `rgba(180,0,255,${wallPulse})`);
+    grad.addColorStop(1, 'rgba(180,0,255,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(wallX === 0 ? 0 : canvas.width - 14, 0, 14, canvas.height);
+  }
+  ctx.restore();
 }
 
 function drawStars() {
@@ -1375,11 +2541,114 @@ function drawCityBuildings() {
   }
 }
 
+function drawForest() {
+  // Animated trees in background
+  const treeXs = [45, 140, 280, 480, 620, 760, 860];
+  for (let i = 0; i < treeXs.length; i++) {
+    const tx   = treeXs[i];
+    const sway = Math.sin(frameCount * 0.008 + i * 1.2) * 3;
+    // trunk
+    ctx.fillStyle = '#3a2010';
+    ctx.fillRect(tx - 5, 400, 10, 80);
+    // canopy layers
+    const shades = ['rgba(30,90,30,0.7)', 'rgba(45,120,40,0.65)', 'rgba(60,150,50,0.6)'];
+    for (let j = 0; j < 3; j++) {
+      ctx.fillStyle = shades[j];
+      ctx.beginPath();
+      ctx.arc(tx + sway, 380 - j * 28, 32 - j * 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // Fireflies / floating particles
+  for (let i = 0; i < 6; i++) {
+    const fx = (frameCount * (0.4 + i * 0.15) + i * 150) % 920 - 10;
+    const fy = 200 + Math.sin(frameCount * 0.02 + i * 2.1) * 80;
+    const fa = 0.4 + Math.sin(frameCount * 0.08 + i) * 0.4;
+    ctx.globalAlpha = Math.max(0, fa);
+    ctx.fillStyle   = '#ccff44';
+    ctx.beginPath();
+    ctx.arc(fx, fy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawIce() {
+  // Snow particles falling
+  for (let i = 0; i < 12; i++) {
+    const sx = ((frameCount * (0.6 + i * 0.1) + i * 75) % 930) - 15;
+    const sy = ((frameCount * (1.2 + i * 0.08) + i * 42) % 520);
+    const sa = 0.3 + (i % 3) * 0.2;
+    ctx.globalAlpha = sa;
+    ctx.fillStyle   = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(sx, sy, 1.5 + (i % 3), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Ice crystals on ground
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = '#aaddff';
+  ctx.lineWidth   = 1.5;
+  for (let i = 0; i < 8; i++) {
+    const cx2 = 60 + i * 115;
+    const cy2 = 455;
+    for (let a = 0; a < 3; a++) {
+      const ang = (a / 3) * Math.PI;
+      ctx.beginPath();
+      ctx.moveTo(cx2, cy2);
+      ctx.lineTo(cx2 + Math.cos(ang) * 14, cy2 + Math.sin(ang) * 14);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx2, cy2);
+      ctx.lineTo(cx2 - Math.cos(ang) * 14, cy2 - Math.sin(ang) * 14);
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.lineWidth   = 1;
+}
+
+function drawRuins() {
+  // Stone columns / pillars in background
+  const cols = [50, 200, 360, 540, 700, 850];
+  for (let i = 0; i < cols.length; i++) {
+    const cx2 = cols[i];
+    const broken = i % 3 === 0;
+    const colH   = broken ? 180 + (i % 2) * 60 : 260;
+    // Column body
+    ctx.fillStyle = `rgba(80,65,48,0.55)`;
+    ctx.fillRect(cx2 - 10, canvas.height - colH, 20, colH);
+    // Column cap
+    ctx.fillStyle = `rgba(100,82,58,0.65)`;
+    ctx.fillRect(cx2 - 14, canvas.height - colH, 28, 12);
+    // Column base
+    ctx.fillStyle = `rgba(100,82,58,0.65)`;
+    ctx.fillRect(cx2 - 14, canvas.height - 16, 28, 16);
+  }
+  // Ambient dust motes
+  for (let i = 0; i < 5; i++) {
+    const dx  = ((frameCount * (0.18 + i * 0.06) + i * 180) % 960) - 30;
+    const dy  = 200 + ((frameCount * (0.22 + i * 0.04) + i * 90) % 280);
+    const da  = 0.08 + Math.sin(frameCount * 0.03 + i) * 0.06;
+    ctx.globalAlpha = Math.max(0, da);
+    ctx.fillStyle   = '#c8a86a';
+    ctx.beginPath();
+    ctx.arc(dx, dy, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawPlatforms() {
+  const isBoss = !!currentArena.isBossArena;
   for (const pl of currentArena.platforms) {
-    // shadow
-    ctx.fillStyle = 'rgba(0,0,0,0.22)';
-    ctx.fillRect(pl.x + 4, pl.y + 4, pl.w, pl.h);
+    if (pl.isFloorDisabled) continue;
+
+    // shadow (skip for moving boss platforms — cheaper and avoids ghost trails)
+    if (!pl.ox && !pl.oy) {
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.fillRect(pl.x + 4, pl.y + 4, pl.w, pl.h);
+    }
     // body
     ctx.fillStyle = currentArena.platColor;
     ctx.fillRect(pl.x, pl.y, pl.w, pl.h);
@@ -1390,6 +2659,42 @@ function drawPlatforms() {
     ctx.strokeStyle = currentArena.platEdge;
     ctx.lineWidth   = 1.5;
     ctx.strokeRect(pl.x, pl.y, pl.w, pl.h);
+
+    // Boss arena: purple glow on moving platforms
+    if (isBoss && (pl.ox !== undefined || pl.oy !== undefined)) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(200,0,255,0.7)';
+      ctx.lineWidth   = 2;
+      ctx.shadowColor = '#aa00ff';
+      ctx.shadowBlur  = 10;
+      ctx.strokeRect(pl.x, pl.y, pl.w, pl.h);
+      ctx.restore();
+    }
+
+    // Floor hazard flash during warning
+    if (isBoss && pl.isFloor && bossFloorState === 'warning') {
+      const flash = Math.sin(frameCount * 0.35) > 0;
+      if (flash) {
+        ctx.save();
+        ctx.fillStyle = bossFloorType === 'lava' ? 'rgba(255,70,0,0.55)' : 'rgba(20,0,60,0.70)';
+        ctx.fillRect(pl.x, pl.y, pl.w, pl.h);
+        ctx.restore();
+      }
+    }
+  }
+
+  // Floor hazard countdown banner
+  if (isBoss && bossFloorState === 'warning') {
+    const secs = Math.ceil(bossFloorTimer / 60);
+    const isLava = bossFloorType === 'lava';
+    ctx.save();
+    ctx.font        = 'bold 20px Arial';
+    ctx.fillStyle   = isLava ? '#ff5500' : '#bb88ff';
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur  = 10;
+    ctx.fillText(`${isLava ? '🌋 LAVA' : '🌑 VOID'} IN ${secs}s`, canvas.width / 2, 444);
+    ctx.restore();
   }
 }
 
@@ -1398,15 +2703,59 @@ function drawPlatforms() {
 // ============================================================
 function checkDeaths() {
   for (const p of players) {
-    if (p.health <= 0 && p.lives > 0 && p.invincible === 0) {
-      p.lives--;
-      p.invincible = 999; // block re-trigger until respawn clears it
-      addKillFeed(p);
-      if (p.lives > 0) {
+    if (p.health <= 0 && p.invincible === 0) {
+      // Boss defeat: trigger cinematic scene instead of normal death
+      if (p.isBoss && !bossDeathScene) { startBossDeathScene(p); continue; }
+      if (p.isBoss && bossDeathScene)  { continue; } // handled by death scene
+      if (trainingMode && !p.isBoss) {
+        // Training mode: player respawns infinitely, no game-over
+        addKillFeed(p);
+        p.invincible = 999;
+        p.ragdollTimer = 55;
+        p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.12 + Math.random() * 0.14);
+        p.vy = -10; p.vx = (Math.random() - 0.5) * 14;
         respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
         setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
-      } else {
-        setTimeout(endGame, 900);
+      } else if (infiniteMode && !p.isBoss) {
+        // Infinite mode: award win to opponent, always respawn
+        const other = players.find(q => q !== p);
+        if (other) { if (p === players[0]) winsP2++; else winsP1++; }
+        addKillFeed(p);
+        p.invincible = 999;
+        respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
+        setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
+      } else if (p.lives > 0) {
+        p.lives--;
+        p.invincible = 999; // block re-trigger until respawn clears it
+        addKillFeed(p);
+        if (p.lives > 0) {
+          respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
+          setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
+        } else {
+          // Check if boss fake-death should trigger (boss < 1000 HP, once per game)
+          const boss = players.find(q => q.isBoss);
+          if (boss && boss.health < 1000 && !fakeDeath.triggered && (gameMode === 'boss' || gameMode === 'boss2p')) {
+            triggerFakeDeath(p);
+          } else {
+            // Check if other human players are still alive (2P boss mode)
+            const otherHumansAlive = players.some(q => !q.isBoss && q !== p && q.lives > 0 && q.health > 0);
+            if (otherHumansAlive) {
+              // Stay dead but don't end game — teammate still fighting
+              p.ragdollTimer = 90;
+              p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.18 + Math.random() * 0.18);
+              p.vy           = -14 - Math.random() * 6;
+              p.vx           = (Math.random() - 0.5) * 20;
+              p.invincible   = 9999; // stay dead
+            } else {
+              // Launch death ragdoll
+              p.ragdollTimer = 90;
+              p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.18 + Math.random() * 0.18);
+              p.vy           = -14 - Math.random() * 6;
+              p.vx           = (Math.random() - 0.5) * 20;
+              setTimeout(endGame, 900);
+            }
+          }
+        }
       }
     }
   }
@@ -1438,13 +2787,16 @@ function endGame() {
 }
 
 function backToMenu() {
-  gameRunning = false;
-  paused      = false;
+  gameRunning  = false;
+  paused       = false;
+  trainingMode = false;
   canvas.style.display = 'block'; // keep visible as animated menu background
   document.getElementById('hud').style.display            = 'none';
   document.getElementById('pauseOverlay').style.display    = 'none';
   document.getElementById('gameOverOverlay').style.display = 'none';
-  document.getElementById('menu').style.display            = 'flex';
+  document.getElementById('menu').style.display            = 'grid';
+  const trainingHud = document.getElementById('trainingHud');
+  if (trainingHud) trainingHud.style.display = 'none';
   resizeGame();
   if (!menuLoopRunning) {
     menuLoopRunning = true;
@@ -1467,8 +2819,15 @@ function resumeGame() {
 // HUD
 // ============================================================
 function updateHUD() {
+  // Slot 1 = first non-boss player; Slot 2 = boss (normal boss mode) or second human (boss2p)
+  const nonBoss = players.filter(p => !p.isBoss);
+  const boss    = players.find(p => p.isBoss);
+  const hudP1   = nonBoss[0];
+  const hudP2   = (gameMode === 'boss2p') ? nonBoss[1] : (boss || nonBoss[1]);
+  const hudPlayers = [hudP1, hudP2];
+
   for (let i = 0; i < 2; i++) {
-    const p = players[i];
+    const p = hudPlayers[i];
     if (!p) continue;
     const n  = i + 1;
     const pct = Math.max(0, p.health / p.maxHealth * 100);
@@ -1482,9 +2841,19 @@ function updateHUD() {
       hEl.style.background = `hsl(${pct * 1.2},100%,44%)`;
     }
     if (lEl) {
-      const full  = '❤'.repeat(Math.max(0, p.lives));
-      const empty = '<span style="opacity:0.18">❤</span>'.repeat(Math.max(0, chosenLives - p.lives));
-      lEl.innerHTML = full + empty;
+      if (p.isBoss) {
+        // Boss: show a phase indicator instead of hearts
+        const phase = p.getPhase ? p.getPhase() : 1;
+        lEl.innerHTML = `<span style="font-size:10px;letter-spacing:1px;color:#cc00ee">PHASE ${phase}</span>`;
+      } else if (infiniteMode || p.isDummy || p.lives >= 50) {
+        lEl.innerHTML = '∞';
+      } else {
+        const capped    = Math.min(p.lives, 10);
+        const cappedMax = Math.min(p._maxLives !== undefined ? p._maxLives : chosenLives, 10);
+        const full  = '❤'.repeat(Math.max(0, capped));
+        const empty = '<span style="opacity:0.18">❤</span>'.repeat(Math.max(0, cappedMax - capped));
+        lEl.innerHTML = full + empty;
+      }
     }
     if (nEl) nEl.style.color = p.color;
     if (sEl) {
@@ -1574,6 +2943,484 @@ function menuBgLoop() {
 }
 
 // ============================================================
+// BOSS DIALOGUE  (speech bubble above boss)
+// ============================================================
+function showBossDialogue(text, dur = 220) {
+  bossDialogue.text  = text;
+  bossDialogue.timer = dur;
+}
+
+function drawBossDialogue() {
+  if (bossDialogue.timer <= 0) return;
+  const boss = players.find(p => p.isBoss);
+  if (!boss || boss.health <= 0) return;
+  bossDialogue.timer--;
+
+  const alpha = Math.min(1, bossDialogue.timer < 45 ? bossDialogue.timer / 45 : 1);
+  const text  = bossDialogue.text;
+  const bx    = boss.cx();
+  const by    = boss.y - 18;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font        = 'bold 13px Arial';
+  ctx.textAlign   = 'center';
+  const tw  = ctx.measureText(text).width;
+  const pad = 11;
+  const bw  = tw + pad * 2;
+  const bh  = 28;
+  const rx  = bx - bw / 2;
+  const ry  = by - bh;
+
+  // Bubble background
+  ctx.fillStyle   = 'rgba(18,0,32,0.90)';
+  ctx.strokeStyle = '#cc00ee';
+  ctx.lineWidth   = 1.8;
+  ctx.beginPath();
+  ctx.roundRect(rx, ry, bw, bh, 7);
+  ctx.fill();
+  ctx.stroke();
+
+  // Tail pointer
+  ctx.beginPath();
+  ctx.moveTo(bx - 8, by);
+  ctx.lineTo(bx,     by + 12);
+  ctx.lineTo(bx + 8, by);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(18,0,32,0.90)';
+  ctx.fill();
+  ctx.strokeStyle = '#cc00ee';
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+
+  // Text
+  ctx.fillStyle   = '#f0aaff';
+  ctx.shadowColor = '#aa00ee';
+  ctx.shadowBlur  = 8;
+  ctx.fillText(text, bx, ry + bh - 9);
+  ctx.restore();
+}
+
+// ============================================================
+// BOSS BEAMS
+// ============================================================
+function drawBossBeams() {
+  for (const b of bossBeams) {
+    ctx.save();
+    if (b.phase === 'warning') {
+      const progress = 1 - b.warningTimer / 300;
+      const flicker  = Math.sin(frameCount * 0.35 + b.x * 0.05) * 0.1;
+      ctx.globalAlpha = clamp(0.15 + progress * 0.40 + flicker, 0.05, 0.65);
+      ctx.strokeStyle = '#dd77ff';
+      ctx.lineWidth   = 5 + progress * 7;
+      ctx.shadowColor = '#9900ee';
+      ctx.shadowBlur  = 20;
+      ctx.setLineDash([22, 14]);
+      ctx.beginPath();
+      ctx.moveTo(b.x, 462);
+      ctx.lineTo(b.x, 0);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Pulsing ground indicator
+      const pulse = 8 + progress * 14 + Math.sin(frameCount * 0.4) * 4;
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle   = '#ff44ff';
+      ctx.shadowBlur  = 24;
+      ctx.beginPath();
+      ctx.arc(b.x, 462, pulse, 0, Math.PI * 2);
+      ctx.fill();
+      // Countdown text
+      const secs = Math.ceil(b.warningTimer / 60);
+      ctx.globalAlpha = 0.9;
+      ctx.font        = 'bold 11px Arial';
+      ctx.fillStyle   = '#ffffff';
+      ctx.textAlign   = 'center';
+      ctx.shadowBlur  = 6;
+      ctx.fillText(secs + 's', b.x, 448);
+    } else if (b.phase === 'active') {
+      ctx.globalAlpha = 0.9;
+      // Outer glow
+      ctx.strokeStyle = '#ff00ff';
+      ctx.lineWidth   = 24;
+      ctx.shadowColor = '#cc00ff';
+      ctx.shadowBlur  = 55;
+      ctx.beginPath();
+      ctx.moveTo(b.x, canvas.height);
+      ctx.lineTo(b.x, 0);
+      ctx.stroke();
+      // Core beam
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 8;
+      ctx.shadowBlur  = 20;
+      ctx.beginPath();
+      ctx.moveTo(b.x, canvas.height);
+      ctx.lineTo(b.x, 0);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// BOSS SPIKES
+// ============================================================
+function drawBossSpikes() {
+  for (const sp of bossSpikes) {
+    if (sp.done || sp.h <= 0) continue;
+    const baseY = 460;
+    const tipY  = baseY - sp.h;
+    ctx.save();
+    ctx.shadowColor = '#cc00ff';
+    ctx.shadowBlur  = 12;
+    // Spike body (tapered rectangle, 10px base → 2px tip)
+    ctx.beginPath();
+    ctx.moveTo(sp.x - 3,   baseY);
+    ctx.lineTo(sp.x + 3,   baseY);
+    ctx.lineTo(sp.x + 0.5, tipY);
+    ctx.lineTo(sp.x - 0.5, tipY);
+    ctx.closePath();
+    ctx.fillStyle = '#aaaacc';
+    ctx.fill();
+    ctx.strokeStyle = '#cc00ff';
+    ctx.lineWidth   = 1.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// SPARTAN RAGE VISUALS  (Kratos class perk active)
+// ============================================================
+function drawSpartanRageEffects() {
+  let anyRage = false;
+  for (const p of players) {
+    if (p.spartanRageTimer <= 0) continue;
+    anyRage = true;
+    const pct = p.spartanRageTimer / 300;
+    const pcx = p.cx(), pcy = p.cy();
+    ctx.save();
+    // Radial aura
+    const grad = ctx.createRadialGradient(pcx, pcy, 0, pcx, pcy, 52 + Math.sin(frameCount * 0.12) * 6);
+    grad.addColorStop(0,   `rgba(255,100,0,${0.32 * pct})`);
+    grad.addColorStop(0.5, `rgba(255,60,0,${0.18 * pct})`);
+    grad.addColorStop(1,   'rgba(255,30,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, 58, 0, Math.PI * 2);
+    ctx.fill();
+    // Pulsing outline ring
+    ctx.strokeStyle = `rgba(255,140,0,${0.65 * pct})`;
+    ctx.lineWidth   = 2.5;
+    ctx.shadowColor = '#ff6600';
+    ctx.shadowBlur  = 18;
+    ctx.beginPath();
+    ctx.arc(pcx, pcy, 34 + Math.sin(frameCount * 0.18) * 4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+    // Floating ember particles every 3 frames
+    if (frameCount % 3 === 0 && settings.particles) {
+      const _ang = Math.random() * Math.PI * 2;
+      const _r   = 16 + Math.random() * 24;
+      particles.push({
+        x: pcx + Math.cos(_ang) * _r, y: pcy + Math.sin(_ang) * _r,
+        vx: (Math.random() - 0.5) * 1.8, vy: -2.0 - Math.random() * 2.2,
+        color: Math.random() < 0.65 ? '#ff6600' : '#ff9900',
+        size: 1.6 + Math.random() * 2.2, life: 28 + Math.random() * 22, maxLife: 50
+      });
+    }
+  }
+  // Screen orange tint — only once regardless of how many have rage
+  if (anyRage) {
+    const _tintA = 0.055 + Math.sin(frameCount * 0.09) * 0.025;
+    ctx.save();
+    ctx.globalAlpha = _tintA;
+    ctx.fillStyle   = '#ff5500';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// CLASS VISUAL EFFECTS (Thor lightning arcs, Ninja shadow trail, etc.)
+// ============================================================
+const classTrails = []; // {x, y, color, alpha, size, life}
+
+function drawClassEffects() {
+  // Update + draw shadow trails
+  for (let i = classTrails.length - 1; i >= 0; i--) {
+    const t = classTrails[i];
+    t.alpha -= 0.04;
+    t.life--;
+    if (t.life <= 0) { classTrails.splice(i, 1); continue; }
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, t.alpha);
+    ctx.fillStyle   = t.color;
+    ctx.beginPath();
+    ctx.roundRect(t.x, t.y, 22, 60, 4);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  for (const p of players) {
+    if (p.health <= 0 || p.backstageHiding) continue;
+
+    // THOR: Periodic lightning arc toward target + electric sparks on body
+    if (p.charClass === 'thor') {
+      // Ambient crackling particles
+      if (frameCount % 8 === 0 && settings.particles) {
+        const a = Math.random() * Math.PI * 2;
+        particles.push({
+          x: p.cx() + Math.cos(a) * 14, y: p.cy() + Math.sin(a) * 14,
+          vx: (Math.random()-0.5)*2, vy: -1.5 - Math.random()*1.5,
+          color: Math.random() < 0.6 ? '#ffff44' : '#aaddff',
+          size: 1.5 + Math.random()*2, life: 14 + Math.random()*10, maxLife: 24
+        });
+      }
+      // Lightning arc toward target every 55 frames
+      if (p.target && p.target.health > 0 && frameCount % 55 === 0) {
+        const tx = p.target.cx(), ty = p.target.cy();
+        const sx2 = p.cx(), sy2 = p.cy();
+        const steps = 7;
+        for (let si = 0; si < steps; si++) {
+          const prog = si / steps;
+          const jx   = sx2 + (tx - sx2) * prog + (Math.random()-0.5)*30;
+          const jy   = sy2 + (ty - sy2) * prog + (Math.random()-0.5)*20;
+          particles.push({ x: jx, y: jy, vx: 0, vy: 0,
+            color: '#ffffaa', size: 2.5, life: 8, maxLife: 8 });
+        }
+      }
+    }
+
+    // NINJA: Shadow trail during fast movement
+    if (p.charClass === 'ninja' && Math.abs(p.vx) > 5 && frameCount % 4 === 0) {
+      classTrails.push({ x: p.x, y: p.y, color: 'rgba(0,200,80,0.45)', alpha: 0.45, size: 1, life: 14 });
+    }
+
+    // KRATOS: Ember sparks when in Spartan Rage (already handled by drawSpartanRageEffects)
+    // Extra hit flash crackle when rage is active and hit
+    if (p.charClass === 'kratos' && p.spartanRageTimer > 0 && p.hurtTimer > 0) {
+      if (settings.particles) {
+        for (let k = 0; k < 3; k++) {
+          particles.push({ x: p.cx() + (Math.random()-0.5)*20, y: p.cy() + (Math.random()-0.5)*20,
+            vx: (Math.random()-0.5)*4, vy: -2-Math.random()*3,
+            color: '#ff8800', size: 2+Math.random()*2, life: 12, maxLife: 12 });
+        }
+      }
+    }
+
+    // GUNNER: Muzzle flash lingering glow on weapon arm (cosmetic)
+    if (p.charClass === 'gunner' && p.attackTimer > 0 && p.attackTimer === p.attackDuration) {
+      if (settings.particles) {
+        spawnParticles(p.cx() + p.facing * 28, p.y + 22, '#ffdd00', 5);
+      }
+    }
+  }
+}
+
+// ============================================================
+// BOSS DEFEAT SCENE
+// ============================================================
+function startBossDeathScene(boss) {
+  bossDeathScene = { phase: 'shatter', timer: 0, orbX: boss.cx(), orbY: boss.cy(), orbR: 0, orbVx: 0, orbVy: 0 };
+  boss.invincible = 9999;
+  screenShake     = 55;
+  for (let _i = 0; _i < 80; _i++) {
+    const _a = Math.random() * Math.PI * 2;
+    const _s = 2 + Math.random() * 12;
+    particles.push({ x: boss.cx(), y: boss.cy(),
+      vx: Math.cos(_a)*_s, vy: Math.sin(_a)*_s,
+      color: ['#cc00ee','#9900bb','#ff00ff','#000000','#ffffff','#6600aa'][Math.floor(Math.random()*6)],
+      size: 2 + Math.random() * 7, life: 70 + Math.random() * 80, maxLife: 150 });
+  }
+  showBossDialogue('N-no... this is not over...', 360);
+}
+
+function updateBossDeathScene() {
+  const sc   = bossDeathScene;
+  if (!sc) return;
+  sc.timer++;
+  const boss = players.find(p => p.isBoss);
+
+  if (sc.phase === 'shatter') {
+    if (boss && sc.timer % 6 === 0) {
+      spawnParticles(boss.cx() + (Math.random()-0.5)*44, boss.cy() + (Math.random()-0.5)*44,
+        Math.random() < 0.5 ? '#cc00ee' : '#000000', 5);
+      screenShake = Math.max(screenShake, 8);
+    }
+    if (sc.timer >= 100) {
+      sc.phase = 'orb_form';
+      if (boss) { sc.orbX = boss.cx(); sc.orbY = boss.cy(); boss.backstageHiding = true; }
+      screenShake = 40;
+      spawnParticles(sc.orbX, sc.orbY, '#9900ee', 50);
+      spawnParticles(sc.orbX, sc.orbY, '#000000', 30);
+    }
+  } else if (sc.phase === 'orb_form') {
+    sc.orbR = Math.min(26, sc.orbR + 0.55);
+    if (sc.timer >= 158) {
+      sc.phase = 'portal_open';
+      const _px = Math.min(sc.orbX + 220, canvas.width - 60);
+      openBackstagePortal(_px, sc.orbY, 'exit');
+    }
+  } else if (sc.phase === 'portal_open') {
+    if (sc.timer >= 192) {
+      sc.phase    = 'orb_fly';
+      sc.orbVx    = 4;
+      sc.orbVy    = -0.8;
+    }
+  } else if (sc.phase === 'orb_fly') {
+    sc.orbX += sc.orbVx;
+    sc.orbY += sc.orbVy;
+    sc.orbVx  = Math.min(sc.orbVx * 1.1, 24);
+    sc.orbR   = Math.max(0, sc.orbR - 0.18);
+    if (sc.orbX > canvas.width + 50 || sc.orbR <= 0) {
+      sc.phase  = 'portal_close';
+      for (const bp of backstagePortals) bp.phase = 'closing';
+    }
+  } else if (sc.phase === 'portal_close') {
+    if (sc.timer >= 310) {
+      bossDeathScene = null;
+      endGame();
+    }
+  }
+}
+
+function drawBossDeathScene() {
+  const sc = bossDeathScene;
+  if (!sc || sc.orbR <= 0) return;
+  ctx.save();
+  const _g = ctx.createRadialGradient(sc.orbX, sc.orbY, 0, sc.orbX, sc.orbY, sc.orbR);
+  _g.addColorStop(0,   'rgba(0,0,12,1)');
+  _g.addColorStop(0.6, 'rgba(50,0,80,0.92)');
+  _g.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.fillStyle   = _g;
+  ctx.shadowColor = '#6600aa';
+  ctx.shadowBlur  = 20;
+  ctx.beginPath();
+  ctx.arc(sc.orbX, sc.orbY, sc.orbR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ============================================================
+// FAKE DEATH SCENE  (boss < 1000 HP + player loses last life)
+// ============================================================
+function triggerFakeDeath(player) {
+  fakeDeath.active    = true;
+  fakeDeath.triggered = true;
+  fakeDeath.timer     = 0;
+  fakeDeath.player    = player;
+  player.invincible   = 9999;
+  player.ragdollTimer = 80;
+  player.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.18 + Math.random() * 0.14);
+  player.vy           = -12;
+  player.vx           = (Math.random() - 0.5) * 14;
+  screenShake         = Math.max(screenShake, 20);
+  const boss = players.find(p => p.isBoss);
+  if (boss) {
+    // Force-interrupt any current dialogue after 1.2s
+    setTimeout(() => {
+      if (gameRunning) {
+        bossDialogue = { text: "I'm not done with you yet...", timer: 320 };
+      }
+    }, 1200);
+  }
+}
+
+function updateFakeDeathScene() {
+  if (!fakeDeath.active) return;
+  fakeDeath.timer++;
+  const p = fakeDeath.player;
+
+  // Phase 1 (t=0–150): dark overlay + boss dialogue
+  // Phase 2 (t=150–220): purple light column rises
+  if (fakeDeath.timer === 150 && p) {
+    screenShake = Math.max(screenShake, 32);
+    if (settings.particles) {
+      for (let i = 0; i < 60; i++) {
+        const angle = -Math.PI/2 + (Math.random()-0.5)*0.4;
+        const spd   = 4 + Math.random() * 10;
+        particles.push({ x: p.spawnX, y: p.spawnY,
+          vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd,
+          color: Math.random() < 0.6 ? '#aa44ff' : '#ffffff',
+          size: 2 + Math.random()*5, life: 60 + Math.random()*40, maxLife: 100 });
+      }
+    }
+  }
+
+  // Phase 3 (t=220): revive player with 2 lives
+  if (fakeDeath.timer === 220 && p) {
+    p.lives        = 2;
+    p.invincible   = 150;
+    p.ragdollTimer = 0;
+    p.ragdollSpin  = 0;
+    p.ragdollAngle = 0;
+    p.respawn();
+    fakeDeath.active = false;
+  }
+}
+
+function drawFakeDeathScene() {
+  if (!fakeDeath.active && fakeDeath.timer === 0) return;
+  if (!fakeDeath.active) return; // scene ended
+  const t = fakeDeath.timer;
+  const p = fakeDeath.player;
+
+  // Dim overlay (builds up in first 60 frames, stays)
+  const overlayAlpha = Math.min(0.72, t / 80 * 0.72);
+  ctx.save();
+  ctx.globalAlpha = overlayAlpha;
+  ctx.fillStyle   = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.restore();
+
+  // "DEFEATED" text at top (fades in at t=40)
+  if (t > 40) {
+    const a = Math.min(1, (t - 40) / 30);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.font        = 'bold 42px Arial';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#ff3333';
+    ctx.shadowColor = '#ff0000';
+    ctx.shadowBlur  = 24;
+    ctx.fillText('DEFEATED', canvas.width / 2, canvas.height / 2 - 40);
+    ctx.restore();
+  }
+
+  // Purple column of light (t=130–220)
+  if (t > 130 && p) {
+    const colAlpha = Math.min(1, (t - 130) / 40);
+    const colPulse = Math.abs(Math.sin((t - 130) * 0.15));
+    ctx.save();
+    ctx.globalAlpha = colAlpha * (0.7 + colPulse * 0.3);
+    const colGrad = ctx.createLinearGradient(p.spawnX, canvas.height, p.spawnX, 0);
+    colGrad.addColorStop(0, 'rgba(160,0,255,0.85)');
+    colGrad.addColorStop(0.5, 'rgba(200,100,255,0.55)');
+    colGrad.addColorStop(1, 'rgba(160,0,255,0)');
+    ctx.fillStyle = colGrad;
+    ctx.fillRect(p.spawnX - 18, 0, 36, canvas.height);
+    // Bright core
+    ctx.fillStyle = `rgba(255,200,255,${colAlpha * 0.55})`;
+    ctx.fillRect(p.spawnX - 6, 0, 12, canvas.height);
+    ctx.restore();
+  }
+
+  // "REVIVING..." text (t=160)
+  if (t > 160) {
+    const a2 = Math.min(1, (t - 160) / 20);
+    ctx.save();
+    ctx.globalAlpha = a2;
+    ctx.font        = 'bold 22px Arial';
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = '#dd88ff';
+    ctx.shadowColor = '#aa00ff';
+    ctx.shadowBlur  = 14;
+    ctx.fillText('REVIVING...', canvas.width / 2, canvas.height / 2 + 10);
+    ctx.restore();
+  }
+}
+
+// ============================================================
 // GAME LOOP
 // ============================================================
 function gameLoop() {
@@ -1583,21 +3430,154 @@ function gameLoop() {
 
   processInput();
 
+  // ---- BOSS ARENA: oscillating platforms + floor hazard state machine ----
+  if (currentArena.isBossArena) {
+    // Animate moving platforms — random-lerp targets for unpredictable movement
+    for (const pl of currentArena.platforms) {
+      if (pl.ox !== undefined) {
+        if (pl.rx === undefined || pl.rTimer <= 0) {
+          // Pick a completely random X anywhere in the platform's range
+          pl.rx    = pl.ox + (Math.random() - 0.5) * pl.oscX * 2;
+          pl.rx    = clamp(pl.rx, pl.ox - pl.oscX, pl.ox + pl.oscX);
+          pl.rTimer = 30 + Math.floor(Math.random() * 50); // 0.5–1.3 s
+        }
+        pl.rTimer--;
+        pl.x = lerp(pl.x, pl.rx, 0.07); // faster chase
+      }
+      if (pl.oy !== undefined) {
+        if (pl.ry === undefined || pl.ryTimer <= 0) {
+          pl.ry    = pl.oy + (Math.random() - 0.5) * pl.oscY * 2;
+          pl.ry    = clamp(pl.ry, pl.oy - pl.oscY, pl.oy + pl.oscY);
+          pl.ryTimer = 30 + Math.floor(Math.random() * 50);
+        }
+        pl.ryTimer--;
+        pl.y = lerp(pl.y, pl.ry, 0.07);
+      }
+    }
+
+    // Floor hazard state machine
+    bossFloorTimer--;
+    if (bossFloorTimer <= 0) {
+      if (bossFloorState === 'normal') {
+        bossFloorState = 'warning';
+        bossFloorType  = Math.random() < 0.5 ? 'lava' : 'void';
+        bossFloorTimer = 300; // 5-second warning
+        showBossDialogue(bossFloorType === 'lava'
+          ? randChoice(['The floor... will burn!', 'Enjoy the heat!', 'Stand still... I dare you.'])
+          : randChoice(['The void... opens below!', 'Nowhere to stand!', 'Fall into darkness!']), 220);
+      } else if (bossFloorState === 'warning') {
+        bossFloorState = 'hazard';
+        bossFloorTimer = 900; // 15-second hazard
+        const floorPl  = currentArena.platforms.find(p => p.isFloor);
+        if (bossFloorType === 'lava') {
+          if (floorPl) floorPl.isFloorDisabled = true;
+          currentArena.hasLava = true;
+          currentArena.lavaY   = 462;
+          currentArena.deathY  = 560;
+        } else {
+          if (floorPl) floorPl.isFloorDisabled = true;
+          currentArena.deathY = 530;
+        }
+      } else { // 'hazard' → back to normal
+        bossFloorState = 'normal';
+        bossFloorTimer = 1200 + Math.floor(Math.random() * 600); // 20–30 s until next
+        const floorPl  = currentArena.platforms.find(p => p.isFloor);
+        if (floorPl) floorPl.isFloorDisabled = false;
+        currentArena.hasLava = false;
+        currentArena.deathY  = 640;
+      }
+    }
+  }
+
   const sx = (Math.random() - 0.5) * screenShake;
   const sy = (Math.random() - 0.5) * screenShake;
   ctx.setTransform(1, 0, 0, 1, sx, sy);
 
   drawBackground();
   drawPlatforms();
+  drawBackstagePortals();
+  drawMapPerks();
+
+  // Boss beams — update logic + draw
+  if (currentArena.isBossArena) {
+    for (const b of bossBeams) {
+      if (b.phase === 'warning') {
+        if (--b.warningTimer <= 0) { b.phase = 'active'; b.activeTimer = 110; }
+      } else if (b.phase === 'active') {
+        if (--b.activeTimer <= 0) { b.done = true; }
+        else {
+          // Deal damage each frame to players caught in beam
+          const boss = players.find(p => p.isBoss);
+          for (const p of players) {
+            if (p.isBoss || p.health <= 0 || p.invincible > 0) continue;
+            if (Math.abs(p.cx() - b.x) < 24) dealDamage(boss || players[1], p, 12, 5);
+          }
+        }
+      }
+    }
+    bossBeams = bossBeams.filter(b => !b.done);
+    drawBossBeams();
+
+    // Boss spikes — update and draw
+    const bossRef = players.find(p => p.isBoss);
+    for (const sp of bossSpikes) {
+      if (sp.done) continue;
+      if (sp.phase === 'rising') {
+        sp.h += 8;
+        if (sp.h >= sp.maxH) { sp.h = sp.maxH; sp.phase = 'staying'; sp.stayTimer = 180; }
+      } else if (sp.phase === 'staying') {
+        sp.stayTimer--;
+        if (sp.stayTimer <= 0) sp.phase = 'falling';
+      } else if (sp.phase === 'falling') {
+        sp.h -= 6;
+        if (sp.h <= 0) { sp.h = 0; sp.done = true; }
+      }
+      // Damage players caught by spike
+      if (sp.phase === 'rising' || sp.phase === 'staying') {
+        const spikeTopY = 460 - sp.h;
+        for (const p of players) {
+          if (p.isBoss || p.health <= 0 || p.invincible > 0) continue;
+          if (Math.abs(p.cx() - sp.x) < 9 && p.y + p.h > spikeTopY) {
+            dealDamage(bossRef || players.find(q => q.isBoss) || players[1], p, 20, 14);
+          }
+        }
+      }
+    }
+    bossSpikes = bossSpikes.filter(sp => !sp.done);
+    drawBossSpikes();
+    if (bossDeathScene) updateBossDeathScene();
+  }
 
   // Projectiles
   projectiles.forEach(p => p.update());
   projectiles = projectiles.filter(p => p.active);
   projectiles.forEach(p => p.draw());
 
+  // Minions (boss-spawned)
+  minions.forEach(m => { if (m.health > 0) m.update(); });
+  minions.forEach(m => { if (m.health > 0) m.draw(); });
+  minions = minions.filter(m => m.health > 0);
+
+  // Training dummies / bots
+  if (trainingMode) {
+    trainingDummies.forEach(d => { if (d.health > 0 || d.invincible > 0) d.update(); });
+    trainingDummies.forEach(d => { if (d.health > 0 || d.invincible > 0) d.draw(); });
+    // Remove dead bots (lives=0), keep dummies (they auto-heal)
+    trainingDummies = trainingDummies.filter(d => {
+      if (d.isDummy) return true; // dummies auto-heal, never remove
+      return d.health > 0 || d.invincible > 0 || d.lives > 0;
+    });
+  }
+
   // Players
   players.forEach(p => { if (p.health > 0 || p.invincible > 0) p.update(); });
   players.forEach(p => { if (p.health > 0 || p.invincible > 0) p.draw(); });
+  drawSpartanRageEffects();
+  drawClassEffects();
+  if (bossDeathScene) drawBossDeathScene();
+  updateMapPerks();
+  updateFakeDeathScene();
+  drawFakeDeathScene();
 
   // Particles — filter dead ones first so life never goes below 1 during draw
   particles = particles.filter(p => p.life > 0);
@@ -1637,11 +3617,32 @@ function gameLoop() {
   }
   respawnCountdowns = respawnCountdowns.filter(cd => cd.framesLeft > 0);
 
+  // Boss speech bubble (drawn last so it's above everything)
+  if (currentArena.isBossArena) drawBossDialogue();
+
   screenShake *= 0.84;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   checkDeaths();
   updateHUD();
+
+  // Infinite mode: draw win score on canvas (outside shake transform)
+  if (infiniteMode && gameRunning) {
+    const p1c = players[0] ? players[0].color : '#00d4ff';
+    const p2c = players[1] ? players[1].color : '#ff4455';
+    ctx.save();
+    ctx.textAlign   = 'center';
+    ctx.shadowColor = 'rgba(0,0,0,0.95)';
+    ctx.shadowBlur  = 14;
+    ctx.font        = 'bold 30px Arial';
+    ctx.fillStyle   = p1c;
+    ctx.fillText(winsP1, canvas.width / 2 - 48, 40);
+    ctx.fillStyle   = 'rgba(255,255,255,0.7)';
+    ctx.fillText('—', canvas.width / 2, 40);
+    ctx.fillStyle   = p2c;
+    ctx.fillText(winsP2, canvas.width / 2 + 48, 40);
+    ctx.restore();
+  }
 
   requestAnimationFrame(gameLoop);
 }
@@ -1682,7 +3683,7 @@ const BOOST_VX      = 16;   // horizontal dash speed
 const BOOST_VY      = -22;  // super-jump velocity
 const BOOST_CD      = 60;   // frames before next boost
 const SHIELD_MAX    = 140;  // max frames shield stays up (~2.3 s)
-const SHIELD_CD     = 1800; // 30-second cooldown at 60 fps
+const SHIELD_CD     = 900; // 30-second cooldown at 60 fps
 
 function processInput() {
   if (!gameRunning || paused) return;
@@ -1694,7 +3695,7 @@ function processInput() {
     if (p.isAI || p.health <= 0) return;
     if (p.ragdollTimer > 0 || p.stunTimer > 0) { p.shielding = false; return; }
 
-    const spd  = 5.2;
+    const spd  = 5.2 * (p.classSpeedMult || 1.0) * (p._speedBuff > 0 ? 1.35 : 1.0);
     const lHeld = keyHeldFrames[p.controls.left]  || 0;
     const rHeld = keyHeldFrames[p.controls.right] || 0;
     const wHeld = keyHeldFrames[p.controls.jump]  || 0;
@@ -1734,11 +3735,25 @@ function processInput() {
         p.vx = -BOOST_VX;
         p.boostCooldown = BOOST_CD;
         spawnParticles(p.cx(), p.cy(), '#00d4ff', 8);
+        // Thor: thunder shockwave on dash
+        if (p.charClass === 'thor') {
+          spawnRing(p.cx(), p.cy());
+          if (p.target && dist(p, p.target) < 130) dealDamage(p, p.target, 8, 6);
+        }
+        // Ninja: reduced dash cooldown
+        if (p.charClass === 'ninja') p.boostCooldown = 20;
       }
       if (rHeld === BOOST_HOLD && keysDown.has(p.controls.right)) {
         p.vx = BOOST_VX;
         p.boostCooldown = BOOST_CD;
         spawnParticles(p.cx(), p.cy(), '#00d4ff', 8);
+        // Thor: thunder shockwave on dash
+        if (p.charClass === 'thor') {
+          spawnRing(p.cx(), p.cy());
+          if (p.target && dist(p, p.target) < 130) dealDamage(p, p.target, 8, 6);
+        }
+        // Ninja: reduced dash cooldown
+        if (p.charClass === 'ninja') p.boostCooldown = 20;
       }
     }
 
@@ -1772,10 +3787,27 @@ function selectMode(mode) {
   gameMode = mode;
   document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('active'));
   document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
-  const isBot = mode === 'bot';
-  document.getElementById('p2Title').textContent          = isBot ? 'BOT' : 'Player 2';
-  document.getElementById('p2Hint').textContent           = isBot ? 'AI Controlled' : '← → ↑ · Enter · . · /';
-  document.getElementById('difficultyRow').style.display  = isBot ? 'flex' : 'none';
+  const isBot      = mode === 'bot';
+  const isBoss     = mode === 'boss';
+  const isBoss2p   = mode === 'boss2p';
+  const isTraining = mode === 'training';
+  // Boss 1P: hide P2 controls. Boss 2P: show P2 controls.
+  document.getElementById('p2Title').textContent          = isBoss ? 'CREATOR' : (isBoss2p ? 'Player 2' : (isBot ? 'BOT' : (isTraining ? 'TRAINING' : 'Player 2')));
+  document.getElementById('p2Hint').textContent           = isBoss ? 'Boss — AI Controlled' : (isBoss2p ? '← → ↑ move · Enter attack · . ability · / super · ↓ shield' : (isBot ? 'AI Controlled' : (isTraining ? 'Practice mode' : '← → ↑ move · Enter attack · . ability · / super · ↓ shield')));
+  document.getElementById('difficultyRow').style.display  = isBot  ? 'flex'  : 'none';
+  document.getElementById('p2ColorRow').style.display     = (isBoss || isTraining) ? 'none'  : 'flex';
+  document.getElementById('p2WeaponRow').style.display    = (isBoss || isTraining) ? 'none'  : 'flex';
+  document.getElementById('p2ClassRow').style.display     = (isBoss || isTraining) ? 'none'  : 'flex';
+  // Training panel visibility
+  const trainingPanel = document.getElementById('trainingPanel');
+  if (trainingPanel) trainingPanel.style.display = isTraining ? 'block' : 'none';
+  // Boss/training mode: hide arena picker and ∞ infinite
+  document.getElementById('arenaSection').style.display   = (isBoss || isBoss2p || isTraining) ? 'none'  : '';
+  document.getElementById('infiniteOption').style.display = (isBoss || isBoss2p || isTraining) ? 'none'  : '';
+  if ((isBoss || isBoss2p || isTraining) && infiniteMode) {
+    infiniteMode = false;
+    selectLives(3);
+  }
 }
 
 function selectArena(name) {
@@ -1785,14 +3817,72 @@ function selectArena(name) {
 }
 
 function selectLives(n) {
-  chosenLives = n;
+  infiniteMode = (n === 0);
+  chosenLives  = infiniteMode ? 3 : n; // placeholder when infinite
   document.querySelectorAll('.arena-card[data-lives]').forEach(c => c.classList.remove('active'));
   document.querySelector(`[data-lives="${n}"]`).classList.add('active');
 }
 
+function toggleSettings() {
+  const panel = document.getElementById('settingsPanel');
+  panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+}
+
+function toggleCard(id) {
+  const card  = document.getElementById(id);
+  const arrow = card.querySelector('.expand-arrow');
+  card.classList.toggle('expanded');
+  if (arrow) arrow.textContent = card.classList.contains('expanded') ? '▾' : '▸';
+}
+
+function updateSettings() {
+  settings.particles   = document.getElementById('settingParticles').checked;
+  settings.screenShake = document.getElementById('settingShake').checked;
+  settings.dmgNumbers  = document.getElementById('settingDmgNums').checked;
+  settings.landingDust = document.getElementById('settingLandDust').checked;
+}
+
 function getWeaponChoice(id) {
   const v = document.getElementById(id).value;
-  return v === 'random' ? randChoice(WEAPON_KEYS) : v;
+  return v === 'random' ? getWeaponChoiceFromPool() : v;
+}
+
+function getClassChoice(id) {
+  const v = document.getElementById(id) ? document.getElementById(id).value : 'none';
+  if (v !== 'random') return v;
+  const pool = randomClassPool ? [...randomClassPool] : ['none', 'thor', 'kratos', 'ninja', 'gunner'];
+  if (pool.length === 0) return 'none';
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getWeaponChoiceFromPool() {
+  const pool = randomWeaponPool ? [...randomWeaponPool] : WEAPON_KEYS;
+  if (pool.length === 0) return WEAPON_KEYS[0];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function toggleRandomPool(type, key) {
+  if (type === 'weapon') {
+    if (!randomWeaponPool) randomWeaponPool = new Set(WEAPON_KEYS);
+    if (randomWeaponPool.has(key)) randomWeaponPool.delete(key);
+    else randomWeaponPool.add(key);
+    // Keep at least 1 weapon
+    if (randomWeaponPool.size === 0) randomWeaponPool.add(key);
+  } else if (type === 'class') {
+    if (!randomClassPool) randomClassPool = new Set(['none', 'thor', 'kratos', 'ninja', 'gunner']);
+    if (randomClassPool.has(key)) randomClassPool.delete(key);
+    else randomClassPool.add(key);
+    if (randomClassPool.size === 0) randomClassPool.add(key);
+  }
+  // Update button label
+  const btn = document.getElementById(`randBtn_${type}_${key}`);
+  if (btn) {
+    const inPool = type === 'weapon'
+      ? (!randomWeaponPool || randomWeaponPool.has(key))
+      : (!randomClassPool  || randomClassPool.has(key));
+    btn.textContent  = inPool ? '\u2713 In Random Pool' : '\u2717 Excluded';
+    btn.style.background = inPool ? 'rgba(0,200,100,0.25)' : 'rgba(200,50,50,0.25)';
+  }
 }
 
 // ============================================================
@@ -1806,8 +3896,18 @@ function startGame() {
   document.getElementById('hud').style.display = 'flex';
 
   // Resolve arena
-  currentArenaKey = selectedArena === 'random' ? randChoice(Object.keys(ARENAS)) : selectedArena;
-  currentArena    = ARENAS[currentArenaKey];
+  const isBossMode     = gameMode === 'boss' || gameMode === 'boss2p';
+  const isTrainingMode = gameMode === 'training';
+  trainingMode = isTrainingMode;
+  if (isBossMode) {
+    currentArenaKey = 'creator';
+  } else {
+    const arenaPool = Object.keys(ARENAS).filter(k => k !== 'creator');
+    currentArenaKey = selectedArena === 'random' ? randChoice(arenaPool) : selectedArena;
+  }
+  if (currentArenaKey !== 'creator') randomizeArenaLayout(currentArenaKey);
+  currentArena = ARENAS[currentArenaKey];
+  initMapPerks(currentArenaKey);
 
   // Resolve weapons & colours
   const w1   = getWeaponChoice('p1Weapon');
@@ -1826,23 +3926,85 @@ function startGame() {
   particles          = [];
   damageTexts        = [];
   respawnCountdowns  = [];
+  minions            = [];
+  bossBeams          = [];
+  bossSpikes         = [];
+  trainingDummies    = [];
+  bossDialogue       = { text: '', timer: 0 };
+  backstagePortals   = [];
+  bossDeathScene     = null;
+  fakeDeath          = { triggered: false, active: false, timer: 0, player: null };
+  mapItems           = [];
+  mapPerkState       = {};
+  winsP1             = 0;
+  winsP2             = 0;
   screenShake     = 0;
   frameCount      = 0;
   paused          = false;
+
+  // Reset boss floor state for every game start
+  bossFloorState = 'normal';
+  bossFloorType  = 'lava';
+  bossFloorTimer = 1500;
+  // Restore creator arena floor platform in case a previous game left it disabled
+  if (ARENAS.creator) {
+    const floorPl = ARENAS.creator.platforms.find(p => p.isFloor);
+    if (floorPl) floorPl.isFloorDisabled = false;
+    ARENAS.creator.hasLava = false;
+    ARENAS.creator.deathY  = 640;
+  }
 
   // Player 1  (W/A/D move+boost · S=shield · Space=attack · Q=ability)
   const p1 = new Fighter(160, 300, c1, w1, { left:'a', right:'d', jump:'w', attack:' ', shield:'s', ability:'q', super:'e' }, false);
   p1.playerNum = 1; p1.name = 'P1'; p1.lives = chosenLives;
   p1.spawnX = 160; p1.spawnY = 300;
+  applyClass(p1, getClassChoice('p1Class'));
 
-  // Player 2 / Bot  (←→↑ move+boost · ↓=shield · Enter=attack · .=ability)
-  const p2 = new Fighter(720, 300, c2, w2, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'.', super:'/' }, isBot, diff);
-  p2.playerNum = 2; p2.name = isBot ? 'BOT' : 'P2'; p2.lives = chosenLives;
-  p2.spawnX = 720; p2.spawnY = 300;
+  // Player 2 / Bot / Boss / Training Dummy
+  let p2;
+  if (isBossMode || gameMode === 'boss2p') {
+    const boss = new Boss();
+    if (gameMode === 'boss2p') {
+      // 2P boss: harder boss
+      boss.attackCooldownMult = 0.38; // ~1.3x faster attacks than 1P
+      boss.kbBonus            = 2.0;  // 1.33x more KB than 1P
+      boss.health             *= 1.5; // 1.5x more HP
+      boss.maxHealth          = boss.health;
+      // Spawn real P2 alongside boss
+      const w2b  = getWeaponChoice('p2Weapon');
+      const c2b  = document.getElementById('p2Color').value;
+      const p2h  = new Fighter(720, 300, c2b, w2b, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'.', super:'/' }, false);
+      p2h.playerNum = 2; p2h.name = 'P2'; p2h.lives = chosenLives;
+      p2h.spawnX = 720; p2h.spawnY = 300;
+      applyClass(p2h, getClassChoice('p2Class'));
+      players = [p1, p2h, boss];
+      p1.target  = boss;
+      p2h.target = boss;
+      boss.target = p1;
+      p2 = p2h; // for HUD reference
+    } else {
+      p2 = boss;
+      players = [p1, p2];
+      p1.target = p2;
+      p2.target = p1;
+    }
+  } else if (isTrainingMode) {
+    p2 = new Dummy(720, 300);
+    p2.playerNum = 2; p2.name = 'DUMMY';
+    players = [p1, p2];
+    p1.target = p2; p2.target = p1;
+  } else {
+    p2 = new Fighter(720, 300, c2, w2, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'Shift', super:'/' }, isBot, diff);
+    p2.playerNum = 2; p2.name = isBot ? 'BOT' : 'P2'; p2.lives = chosenLives;
+    p2.spawnX = 720; p2.spawnY = 300;
+    applyClass(p2, getClassChoice('p2Class'));
+    players = [p1, p2];
+    p1.target = p2; p2.target = p1;
+  }
 
-  players = [p1, p2];
-  p1.target = p2;
-  p2.target = p1;
+  // Training mode: show in-game HUD
+  const trainingHud = document.getElementById('trainingHud');
+  if (trainingHud) trainingHud.style.display = isTrainingMode ? 'flex' : 'none';
 
   // HUD labels
   document.getElementById('p1HudName').textContent = p1.name;
