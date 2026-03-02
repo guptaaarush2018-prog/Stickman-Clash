@@ -14,6 +14,8 @@ let gameMode        = '2p';
 let selectedArena   = 'grass';
 let chosenLives     = 3;
 let gameRunning     = false;
+let p1IsBot         = false;
+let p2IsBot         = false;
 let paused          = false;
 let players         = [];
 let minions         = [];    // boss-spawned minions
@@ -52,6 +54,238 @@ let currentArenaKey = 'grass';
 // Pre-generated bg elements (so they don't flicker each frame)
 let bgStars     = [];
 let bgBuildings = [];
+
+// Active Matter.js ragdoll bodies (visual only — separate from game physics)
+const activeRagdolls = [];
+
+// True-boss unlock (entered via code)
+let unlockedTrueBoss = false;
+
+// ============================================================
+// MATTER.JS RAGDOLL ENGINE  (visual-only; no game-physics collision)
+// ============================================================
+// Shared Matter.js engine used for all physics-driven fighters and arena static bodies
+const ragEngine = Matter.Engine.create();
+// default gravity (per-arena overrides applied on world creation)
+ragEngine.gravity.y = 1.4;
+
+// Track platform static bodies added to the physics world so they can be rebuilt per-arena
+let physicsPlatforms = [];
+
+function buildPhysicsWorldForArena(arena) {
+  // clear existing physics world
+  physicsPlatforms.forEach(b => Matter.World.remove(ragEngine.world, b));
+  physicsPlatforms = [];
+  // choose gravity based on arena properties
+  if (!arena) ragEngine.gravity.y = 0.65;
+  else if (arena.isLowGravity) ragEngine.gravity.y = 0.28;
+  else if (arena.isHeavyGravity) ragEngine.gravity.y = 0.95;
+  else ragEngine.gravity.y = 0.65;
+
+  // create static platform bodies so ragdolls can collide with game platforms
+  for (const pl of (arena ? arena.platforms : [])) {
+    const b = Matter.Bodies.rectangle(pl.x + pl.w / 2, pl.y + pl.h / 2, pl.w, pl.h,
+      { isStatic: true, label: 'platform', collisionFilter: { category: 0x0001, mask: 0xFFFF } });
+    physicsPlatforms.push(b);
+  }
+  if (physicsPlatforms.length) Matter.World.add(ragEngine.world, physicsPlatforms);
+}
+
+class RagdollBody {
+  constructor(x, y, vx, vy, color, scale = 1) {
+    this.color     = color;
+    this.scale     = scale;
+    this.active    = true;
+    this.lifeTimer = 220;
+    const s = scale * 0.9;
+    const cf = { category: 0x0002, mask: 0x0000 };
+    const bo = (ex = {}) => ({ friction: 0.55, restitution: 0.3, collisionFilter: cf, ...ex });
+    this.head = Matter.Bodies.circle(x,      y - 28*s, 9*s,   bo({ density: 0.002 }));
+    this.torso= Matter.Bodies.rectangle(x,   y - 4*s,  7*s,  22*s,  bo({ density: 0.005 }));
+    this.rUA  = Matter.Bodies.rectangle(x-13*s, y-8*s, 4*s,  14*s,  bo({ density: 0.001 }));
+    this.lUA  = Matter.Bodies.rectangle(x+13*s, y-8*s, 4*s,  14*s,  bo({ density: 0.001 }));
+    this.rLA  = Matter.Bodies.rectangle(x-17*s, y+4*s, 3*s,  12*s,  bo({ density: 0.0008 }));
+    this.lLA  = Matter.Bodies.rectangle(x+17*s, y+4*s, 3*s,  12*s,  bo({ density: 0.0008 }));
+    this.rUL  = Matter.Bodies.rectangle(x-5*s,  y+16*s,5*s,  14*s,  bo({ density: 0.002 }));
+    this.lUL  = Matter.Bodies.rectangle(x+5*s,  y+16*s,5*s,  14*s,  bo({ density: 0.002 }));
+    this.rLL  = Matter.Bodies.rectangle(x-6*s,  y+32*s,4*s,  14*s,  bo({ density: 0.0015 }));
+    this.lLL  = Matter.Bodies.rectangle(x+6*s,  y+32*s,4*s,  14*s,  bo({ density: 0.0015 }));
+    this.parts = [this.head, this.torso, this.rUA, this.lUA, this.rLA, this.lLA,
+                  this.rUL, this.lUL, this.rLL, this.lLL];
+    const j = (a, b2, pA, pB, st = 0.6) =>
+      Matter.Constraint.create({ bodyA: a, bodyB: b2, pointA: pA, pointB: pB,
+                                  stiffness: st, damping: 0.05, length: 0 });
+    this.joints = [
+      j(this.head,  this.torso, {x:0,y:8*s},    {x:0,y:-11*s}, 0.8),
+      j(this.torso, this.rUA,   {x:-4*s,y:-9*s},{x:0,y:-7*s}),
+      j(this.torso, this.lUA,   {x:4*s, y:-9*s},{x:0,y:-7*s}),
+      j(this.rUA,   this.rLA,   {x:0,y:7*s},    {x:0,y:-6*s},  0.5),
+      j(this.lUA,   this.lLA,   {x:0,y:7*s},    {x:0,y:-6*s},  0.5),
+      j(this.torso, this.rUL,   {x:-3*s,y:11*s},{x:0,y:-7*s}),
+      j(this.torso, this.lUL,   {x:3*s, y:11*s},{x:0,y:-7*s}),
+      j(this.rUL,   this.rLL,   {x:0,y:7*s},    {x:0,y:-7*s},  0.5),
+      j(this.lUL,   this.lLL,   {x:0,y:7*s},    {x:0,y:-7*s},  0.5),
+    ];
+    for (const p of this.parts) {
+      Matter.Body.setVelocity(p, { x: vx*0.55 + (Math.random()-0.5)*3,
+                                    y: vy*0.55 + (Math.random()-0.5)*3 });
+      Matter.Body.setAngularVelocity(p, (Math.random()-0.5)*0.38);
+    }
+    Matter.World.add(ragEngine.world, [...this.parts, ...this.joints]);
+  }
+  destroy() {
+    if (!this.active) return;
+    this.active = false;
+    Matter.World.remove(ragEngine.world, this.parts);
+    Matter.World.remove(ragEngine.world, this.joints);
+  }
+  draw() {
+    if (!this.active) return;
+    this.lifeTimer--;
+    if (this.lifeTimer <= 0 || this.torso.position.y > 820) { this.destroy(); return; }
+    const alpha = this.lifeTimer < 50 ? this.lifeTimer / 50 : 1;
+    const s     = this.scale;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = this.color;
+    ctx.fillStyle   = this.color;
+    ctx.lineWidth   = 2.5 * s;
+    ctx.lineCap     = 'round';
+    const p = b => b.position;
+    // Head
+    ctx.beginPath();
+    ctx.arc(p(this.head).x, p(this.head).y, 9 * s, 0, Math.PI * 2);
+    ctx.fill();
+    // Eyes
+    const ha = this.head.angle;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(p(this.head).x + Math.cos(ha - 0.4)*5*s,
+            p(this.head).y + Math.sin(ha - 0.4)*5*s - 2*s, 2*s, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillStyle = '#222';
+    ctx.beginPath();
+    ctx.arc(p(this.head).x + Math.cos(ha - 0.35)*5.5*s,
+            p(this.head).y + Math.sin(ha - 0.35)*5.5*s - 2*s, 1.1*s, 0, Math.PI*2);
+    ctx.fill();
+    // Limbs
+    ctx.strokeStyle = this.color;
+    const dl = (b1, b2) => {
+      ctx.beginPath(); ctx.moveTo(p(b1).x, p(b1).y); ctx.lineTo(p(b2).x, p(b2).y); ctx.stroke();
+    };
+    dl(this.head, this.torso);
+    dl(this.torso, this.rUA); dl(this.torso, this.lUA);
+    dl(this.rUA, this.rLA);   dl(this.lUA, this.lLA);
+    dl(this.torso, this.rUL); dl(this.torso, this.lUL);
+    dl(this.rUL, this.rLL);   dl(this.lUL, this.lLL);
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// PHYSCHAR — kinematic torso + physics limbs (live character)
+// ============================================================
+class PhysChar {
+  constructor(cx, cy, color, scale = 1) {
+    this.color     = color;
+    this.scale     = scale;
+    this.alive     = true;   // true = kinematic torso; false = full ragdoll
+    this.facing    = 1;
+    this.lifeTimer = 210;    // frames before dead physchar fades out
+    this.active    = true;
+    const s  = scale;
+    const cf = { category: 0x0004, mask: 0x0000 }; // visual-only, no collisions
+    const bo = (ex = {}) => ({ friction: 0.35, restitution: 0.25, collisionFilter: cf, ...ex });
+    // 8 rigid bodies
+    this.torso = Matter.Bodies.rectangle(cx,        cy,         8*s,  22*s, bo({ density: 0.008 }));
+    this.head  = Matter.Bodies.circle(cx,           cy - 24*s,  8*s,        bo({ density: 0.002 }));
+    this.rUA   = Matter.Bodies.rectangle(cx - 11*s, cy -  9*s,  4*s,  13*s, bo({ density: 0.001 }));
+    this.lUA   = Matter.Bodies.rectangle(cx + 11*s, cy -  9*s,  4*s,  13*s, bo({ density: 0.001 }));
+    this.rLA   = Matter.Bodies.rectangle(cx - 15*s, cy +  2*s,  3*s,  11*s, bo({ density: 0.0008 }));
+    this.lLA   = Matter.Bodies.rectangle(cx + 15*s, cy +  2*s,  3*s,  11*s, bo({ density: 0.0008 }));
+    this.rLeg  = Matter.Bodies.rectangle(cx -  5*s, cy + 20*s,  4*s,  22*s, bo({ density: 0.003 }));
+    this.lLeg  = Matter.Bodies.rectangle(cx +  5*s, cy + 20*s,  4*s,  22*s, bo({ density: 0.003 }));
+    this.parts = [this.torso, this.head, this.rUA, this.lUA, this.rLA, this.lLA, this.rLeg, this.lLeg];
+    // 7 constraints (joints)
+    const j = (a, b, pA, pB, st = 0.7) =>
+      Matter.Constraint.create({ bodyA: a, bodyB: b, pointA: pA, pointB: pB, stiffness: st, damping: 0.1, length: 0 });
+    this.joints = [
+      j(this.head,  this.torso, {x:0,     y: 8*s},  {x:0,    y:-10*s}, 0.85),
+      j(this.torso, this.rUA,   {x:-3*s,  y:-9*s},  {x:0,    y: -6*s}, 0.70),
+      j(this.torso, this.lUA,   {x: 3*s,  y:-9*s},  {x:0,    y: -6*s}, 0.70),
+      j(this.rUA,   this.rLA,   {x:0,     y: 6*s},  {x:0,    y: -5*s}, 0.55),
+      j(this.lUA,   this.lLA,   {x:0,     y: 6*s},  {x:0,    y: -5*s}, 0.55),
+      j(this.torso, this.rLeg,  {x:-3*s,  y:10*s},  {x:0,    y:-11*s}, 0.80),
+      j(this.torso, this.lLeg,  {x: 3*s,  y:10*s},  {x:0,    y:-11*s}, 0.80),
+    ];
+    Matter.World.add(ragEngine.world, [...this.parts, ...this.joints]);
+    // Lock torso rotation while alive (kinematic)
+    Matter.Body.set(this.torso, { inertia: Infinity, inverseInertia: 0 });
+  }
+
+  syncToGame(cx, cy, facing) {
+    if (!this.alive) return;
+    this.facing = facing;
+    Matter.Body.setPosition(this.torso, { x: cx, y: cy });
+    Matter.Body.setVelocity(this.torso, { x: 0,  y: 0 });
+    Matter.Body.setAngle(this.torso, 0);
+    Matter.Body.setAngularVelocity(this.torso, 0);
+  }
+
+  swingArm(facing) {
+    if (!this.alive) return;
+    const arm  = facing > 0 ? this.rUA : this.lUA;
+    const fore = facing > 0 ? this.rLA : this.lLA;
+    Matter.Body.setAngularVelocity(arm,  facing > 0 ?  0.28 : -0.28);
+    Matter.Body.setAngularVelocity(fore, facing > 0 ?  0.42 : -0.42);
+  }
+
+  release(vx, vy) {
+    this.alive = false;
+    Matter.Body.set(this.torso, { inertia: 90, inverseInertia: 1 / 90 });
+    for (const p of this.parts) {
+      Matter.Body.setVelocity(p, { x: vx * 0.5 + (Math.random() - 0.5) * 3,
+                                   y: vy * 0.5 + (Math.random() - 0.5) * 3 });
+      Matter.Body.setAngularVelocity(p, (Math.random() - 0.5) * 0.35);
+    }
+  }
+
+  destroy() {
+    if (!this.active) return;
+    this.active = false;
+    try { Matter.World.remove(ragEngine.world, this.parts);  } catch (e) {}
+    try { Matter.World.remove(ragEngine.world, this.joints); } catch (e) {}
+  }
+
+  draw() {
+    if (!this.active) return;
+    if (!this.alive) {
+      this.lifeTimer--;
+      if (this.lifeTimer <= 0 || this.torso.position.y > 900) { this.destroy(); return; }
+    }
+    const alpha = (!this.alive && this.lifeTimer < 50) ? this.lifeTimer / 50 : 1;
+    const s = this.scale, f = this.facing;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const hp   = this.head.position,  tp   = this.torso.position,
+          rUAp = this.rUA.position,   lUAp = this.lUA.position,
+          rLAp = this.rLA.position,   lLAp = this.lLA.position,
+          rLp  = this.rLeg.position,  lLp  = this.lLeg.position;
+    const tTop = { x: tp.x, y: tp.y - 10*s }, tBot = { x: tp.x, y: tp.y + 10*s };
+    ctx.strokeStyle = this.color; ctx.fillStyle = this.color;
+    ctx.lineWidth = 2.5 * s; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    const dl = (a, b) => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); };
+    ctx.beginPath(); ctx.arc(hp.x, hp.y, 8 * s, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';  ctx.beginPath(); ctx.arc(hp.x + f*3*s, hp.y - s, 2.5*s, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#222';  ctx.beginPath(); ctx.arc(hp.x + f*4.2*s, hp.y - s, 1.3*s, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = this.color;
+    dl(hp, tTop); dl(tTop, tBot);
+    dl(tTop, rUAp); dl(rUAp, rLAp);
+    dl(tTop, lUAp); dl(lUAp, lLAp);
+    dl(tBot, rLp);  dl(tBot, lLp);
+    ctx.restore();
+  }
+}
 
 // Arena order (used for menu background cycling)
 const ARENA_KEYS_ORDERED = ['grass', 'city', 'space', 'lava', 'forest', 'ice', 'ruins'];
@@ -126,9 +360,7 @@ const ARENAS = {
     hasLava:     false,
     deathY:      640,
     platforms: [
-      { x:   0, y: 438, w: 235, h: 82 }, // left building
-      { x: 333, y: 458, w: 234, h: 62 }, // centre building
-      { x: 665, y: 438, w: 235, h: 82 }, // right building
+      { x:   0, y: 438, w: 900, h: 82 }, // continuous rooftop floor (no death gaps)
       { x:  52, y: 338, w: 132, h: 15 }, // left mid
       { x: 372, y: 322, w: 156, h: 15 }, // centre mid
       { x: 716, y: 338, w: 132, h: 15 }, // right mid
@@ -244,7 +476,7 @@ const MAP_PERK_DEFS = {
       { baseX: 450, baseY: 400 },  // on center block
       { baseX: 765, baseY: 400 },  // on right block
     ],
-    types: ['speed','power','heal','shield']
+    types: ['speed','power','heal','shield','maxhp']
   },
   forest: {
     healZones: [{ x: 0, w: 900, healRate: 60 }]  // gentle healing every 60 frames
@@ -293,7 +525,7 @@ function updateMapPerks() {
         item.respawnIn--;
         if (item.respawnIn <= 0) {
           item.collected = false;
-          item.type = MAP_PERK_DEFS.ruins.types[Math.floor(Math.random() * 4)];
+          item.type = MAP_PERK_DEFS.ruins.types[Math.floor(Math.random() * MAP_PERK_DEFS.ruins.types.length)];
         }
         continue;
       }
@@ -308,7 +540,7 @@ function updateMapPerks() {
           spawnParticles(item.x, item.y, '#ffd700', 16);
           screenShake = Math.max(screenShake, 6);
           if (settings.dmgNumbers) {
-            const labels = { speed:'SWIFT!', power:'POWER!', heal:'+30 HP', shield:'SHIELD!' };
+            const labels = { speed:'SWIFT!', power:'POWER!', heal:'+30 HP', shield:'SHIELD!', maxhp:'+15 MAX HP' };
             damageTexts.push(new DamageText(item.x, item.y - 20, labels[item.type] || '!', '#ffd700'));
           }
           break;
@@ -380,11 +612,11 @@ function updateMapPerks() {
           color: Math.random() < 0.5 ? '#ff4400' : '#ff8800',
           size: 3+Math.random()*4, life: 30+Math.random()*20, maxLife: 50 });
       }
-      // Damage nearby players
+      // Damage nearby players — wider (±80px), taller (140px above lava), 35% total HP (8 ticks × 0.044)
       for (const p of players) {
         if (p.isBoss || p.health <= 0 || p.invincible > 0) continue;
-        if (Math.abs(p.cx() - er.x) < 40 && p.y + p.h > (currentArena.lavaY || 442) - 80) {
-          if (er.timer % 10 === 0) dealDamage(players.find(q => q.isBoss) || players[1], p, 10, 8);
+        if (Math.abs(p.cx() - er.x) < 80 && p.y + p.h > (currentArena.lavaY || 442) - 140) {
+          if (er.timer % 10 === 0) dealDamage(players.find(q => q.isBoss) || players[1], p, Math.ceil(p.maxHealth * 0.044), 8);
         }
       }
     }
@@ -401,6 +633,10 @@ function applyMapPerk(player, type) {
   } else if (type === 'shield') {
     player.invincible = Math.max(player.invincible, 180);
     spawnParticles(player.cx(), player.cy(), '#88ddff', 20);
+  } else if (type === 'maxhp') {
+    player.maxHealth = Math.min(250, player.maxHealth + 15);
+    player.health    = Math.min(player.maxHealth, player.health + 15);
+    spawnParticles(player.cx(), player.cy(), '#ff88ff', 20);
   }
 }
 
@@ -411,7 +647,7 @@ function drawMapPerks() {
       if (item.collected) continue;
       const bob   = Math.sin(item.animPhase) * 5;
       const glow  = 0.6 + Math.sin(item.animPhase * 1.3) * 0.3;
-      const colors = { speed:'#44aaff', power:'#ff4422', heal:'#44ff88', shield:'#88ddff' };
+      const colors = { speed:'#44aaff', power:'#ff4422', heal:'#44ff88', shield:'#88ddff', maxhp:'#ff88ff' };
       const glowC  = colors[item.type] || '#ffd700';
       ctx.save();
       ctx.shadowColor = glowC;
@@ -427,8 +663,27 @@ function drawMapPerks() {
       ctx.font        = 'bold 10px Arial';
       ctx.textAlign   = 'center';
       ctx.textBaseline = 'middle';
-      const icons = { speed:'\u26a1', power:'\ud83d\udca5', heal:'\u2764', shield:'\ud83d\udee1' };
+      const icons = { speed:'\u26a1', power:'\ud83d\udca5', heal:'\u2764', shield:'\ud83d\udee1', maxhp:'\u2665+' };
       ctx.fillText(icons[item.type] || '?', item.x, item.y + bob);
+      ctx.restore();
+    }
+  }
+
+  // ---- LAVA eruption columns ----
+  if (currentArenaKey === 'lava' && mapPerkState.eruptions) {
+    const ly = currentArena.lavaY || 442;
+    for (const er of mapPerkState.eruptions) {
+      const progress = 1 - (er.timer / 80);
+      const colH = Math.min(160, progress * 320);
+      const alpha = er.timer < 20 ? er.timer / 20 : Math.min(1, (80 - er.timer) / 10 + 0.6);
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.85;
+      const cg = ctx.createLinearGradient(er.x, ly, er.x, ly - colH);
+      cg.addColorStop(0, '#ff8800');
+      cg.addColorStop(0.4, 'rgba(255,60,0,0.75)');
+      cg.addColorStop(1, 'rgba(255,40,0,0)');
+      ctx.fillStyle = cg;
+      ctx.fillRect(er.x - 28, ly - colH, 56, colH);
       ctx.restore();
     }
   }
@@ -490,6 +745,7 @@ const WEAPONS = {
     name: 'Gun',     damage: 10, range: 600, cooldown: 32,
     damageFunc: () => Math.floor(Math.random() * 4) + 5,
     superRateBonus: 2.8,
+    splashRange: 38, splashDmgPct: 0.30,
     kb: 6,           abilityCooldown: 150, type: 'ranged', color: '#666666',
     abilityName: 'Rapid Fire',
     ability(user, _target) {
@@ -504,6 +760,7 @@ const WEAPONS = {
   axe: {
     // Balanced all-rounder. Spin ability covers both sides.
     name: 'Axe',     damage: 22, range: 70, cooldown: 36,
+    splashRange: 95, splashDmgPct: 0.55,
     kb: 14,          abilityCooldown: 150, type: 'melee', color: '#cc4422',
     abilityName: 'Spin Attack',
     ability(user, target) {
@@ -586,7 +843,7 @@ function lerp(a, b, t)   { return a + (b - a) * t; }
 function clamp(v, mn, mx){ return Math.max(mn, Math.min(mx, v)); }
 function dist(a, b)      { return Math.hypot(a.cx() - b.cx(), (a.y + a.h/2) - (b.y + b.h/2)); }
 
-function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0) {
+function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = false) {
   if (target.invincible > 0 || target.health <= 0) return;
   let actualDmg = (attacker && attacker.dmgMult !== undefined) ? Math.max(1, Math.round(dmg * attacker.dmgMult)) : dmg;
   // Kratos rage bonus
@@ -637,6 +894,8 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0) {
   const dir        = target.cx() > attacker.cx() ? 1 : -1;
   target.vx        = dir * actualKb;
   target.vy        = -actualKb * 0.55;
+  if (currentArena && currentArena.isLowGravity)  target.vy = -actualKb * 0.25;
+  if (currentArena && currentArena.isHeavyGravity) target.vy = -actualKb * 0.75;
   if (settings.screenShake) screenShake = Math.max(screenShake, target.shielding ? 3 : 9);
   if (!target.shielding) {
     spawnParticles(target.cx(), target.cy(), target.color, 12);
@@ -661,6 +920,27 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0) {
     attacker.superFlashTimer = 90;
   }
   if (settings.dmgNumbers) damageTexts.push(new DamageText(target.cx(), target.y, actualDmg, target.shielding ? '#88ddff' : '#ffdd00'));
+  // Weapon splash — axe (large) and gun (small) deal AoE to nearby targets
+  if (!isSplash && !target.shielding && attacker.weapon && attacker.weapon.splashRange) {
+    handleSplash(attacker, target, actualDmg);
+  }
+}
+
+function handleSplash(attacker, hitTarget, originalDmg, splashX, splashY) {
+  const w = attacker.weapon;
+  if (!w || !w.splashRange) return;
+  const sx  = splashX !== undefined ? splashX : hitTarget.cx();
+  const sy  = splashY !== undefined ? splashY : (hitTarget.y + hitTarget.h / 2);
+  const sdmg = Math.max(1, Math.floor(originalDmg * w.splashDmgPct));
+  const skb  = Math.floor((w.kb || 8) * 0.35);
+  const all  = [...players, ...minions, ...trainingDummies];
+  for (const t of all) {
+    if (t === hitTarget || t === attacker || t.health <= 0 || t.invincible > 0) continue;
+    if (Math.hypot(t.cx() - sx, (t.y + t.h / 2) - sy) < w.splashRange) {
+      dealDamage(attacker, t, sdmg, skb, 1.0, true);
+      if (settings.particles) spawnParticles(t.cx(), t.cy(), w.color || '#ffaa44', 6);
+    }
+  }
 }
 
 function spawnParticles(x, y, color, count) {
@@ -729,6 +1009,7 @@ class Projectile {
       if (p === this.owner || p.health <= 0) continue;
       if (this.x > p.x && this.x < p.x+p.w && this.y > p.y && this.y < p.y+p.h) {
         dealDamage(this.owner, p, this.damage, 7);
+        handleSplash(this.owner, p, this.damage, this.x, this.y);
         this.active = false;
         spawnParticles(this.x, this.y, this.color, 6);
         return;
@@ -740,6 +1021,7 @@ class Projectile {
         if (mn.health <= 0) continue;
         if (this.x > mn.x && this.x < mn.x+mn.w && this.y > mn.y && this.y < mn.y+mn.h) {
           dealDamage(this.owner, mn, this.damage, 9);
+          handleSplash(this.owner, mn, this.damage, this.x, this.y);
           this.active = false;
           spawnParticles(this.x, this.y, this.color, 6);
           return;
@@ -752,6 +1034,7 @@ class Projectile {
         if (dum.health <= 0) continue;
         if (this.x > dum.x && this.x < dum.x+dum.w && this.y > dum.y && this.y < dum.y+dum.h) {
           dealDamage(this.owner, dum, this.damage, 9);
+          handleSplash(this.owner, dum, this.damage, this.x, this.y);
           this.active = false;
           spawnParticles(this.x, this.y, this.color, 6);
           return;
@@ -860,15 +1143,21 @@ class Fighter {
     this.animTimer    = 0;
     this._speedBuff   = 0;
     this._powerBuff   = 0;
-    this._maxLives    = chosenLives; // for correct heart display
-    this.onePunchMode = false;       // training: kills anything in one hit
-    this.target       = null;
+    this._maxLives       = chosenLives; // for correct heart display
+    this.onePunchMode    = false;       // training: kills anything in one hit
+    this.swingHitTargets = new Set();   // tracks targets hit in current swing (multi-hit)
+    this._lastTapLeft    = -999;        // frame of last left-key tap (double-tap dash)
+    this._lastTapRight   = -999;
+    this._lastTapUp      = -999;
+    this.target          = null;
     this.aiState     = 'chase';
     this.aiReact     = 0;
     this.spawnX      = x;
     this.spawnY      = y;
     this.name        = '';
     this.playerNum   = 1;
+    // PhysChar: kinematic torso + physics limbs for live rendering
+    this.physChar = new PhysChar(this.cx(), this.y + 36, this.color, this.drawScale || 1);
   }
 
   cx() { return this.x + this.w / 2; }
@@ -878,7 +1167,7 @@ class Fighter {
     this.x  = this.spawnX;
     this.y  = this.spawnY - 60;
     this.vx = 0; this.vy = 0;
-    this.health          = 100;
+    this.health          = this.maxHealth; // always restore to full on respawn
     this.shielding       = false;
     this.spinning        = 0;
     this.ragdollTimer    = 0;
@@ -897,6 +1186,9 @@ class Fighter {
     this.classPerkUsed    = false;
     this.spartanRageTimer = 0;
     this.invincible      = 100;
+    // Recreate physChar on respawn (fresh body positions above spawn)
+    if (this.physChar) { this.physChar.destroy(); }
+    this.physChar = new PhysChar(this.cx(), this.y + 36, this.color, this.drawScale || 1);
     spawnParticles(this.cx(), this.cy(), this.color, 22);
   }
 
@@ -934,39 +1226,41 @@ class Fighter {
       this.ragdollSpin  = 0;
     }
 
-    // ---- WEAPON TIP HITBOX (melee only) ----
-    if (this.attackTimer > 0 && !this.weaponHit && this.weapon.type === 'melee' && this.target) {
+    // ---- WEAPON TIP HITBOX (melee only) — hits ALL targets in range ----
+    if (this.attackTimer > 0 && this.weapon.type === 'melee' && this.target) {
       const tip = this.getWeaponTipPos();
       if (tip) {
         const tgt = this.target;
         const hitPad = this.isAI ? 16 : 10;
-        if (tgt.health > 0 &&
+        // Primary target
+        if (!this.swingHitTargets.has(tgt) && tgt.health > 0 &&
             tip.x > tgt.x - hitPad && tip.x < tgt.x + tgt.w + hitPad &&
             tip.y > tgt.y - 8      && tip.y < tgt.y + tgt.h + 8) {
           dealDamage(this, tgt, this.weapon.damage, this.weapon.kb);
+          this.swingHitTargets.add(tgt);
           this.weaponHit = true;
         }
-        // Player melee also hits minions
-        if (!this.weaponHit && !this.isMinion && !(this instanceof Boss)) {
+        // All minions in range (multi-hit — no break)
+        if (!this.isMinion && !(this instanceof Boss)) {
           for (const mn of minions) {
-            if (mn.health > 0 &&
+            if (!this.swingHitTargets.has(mn) && mn.health > 0 &&
                 tip.x > mn.x - 12 && tip.x < mn.x + mn.w + 12 &&
-                tip.y > mn.y     && tip.y < mn.y + mn.h) {
+                tip.y > mn.y      && tip.y < mn.y + mn.h) {
               dealDamage(this, mn, this.weapon.damage, this.weapon.kb);
+              this.swingHitTargets.add(mn);
               this.weaponHit = true;
-              break;
             }
           }
         }
-        // Player melee also hits training dummies
-        if (!this.weaponHit && !this.isDummy) {
+        // All training dummies in range (multi-hit — no break)
+        if (!this.isDummy) {
           for (const dum of trainingDummies) {
-            if (dum.health > 0 &&
+            if (!this.swingHitTargets.has(dum) && dum.health > 0 &&
                 tip.x > dum.x - 8 && tip.x < dum.x + dum.w + 8 &&
                 tip.y > dum.y     && tip.y < dum.y + dum.h) {
               dealDamage(this, dum, this.weapon.damage, this.weapon.kb);
+              this.swingHitTargets.add(dum);
               this.weaponHit = true;
-              break;
             }
           }
         }
@@ -1012,7 +1306,7 @@ class Fighter {
     this.y  += this.vy;
 
     // Friction
-    const friction = (this.onGround && currentArena.isIcy) ? 0.93 : (this.onGround ? 0.78 : 0.94);
+    const friction = (this.onGround && currentArena.isIcy) ? 0.975 : (this.onGround ? 0.78 : 0.94);
     this.vx *= friction;
     this.vx  = clamp(this.vx, -13, 13);
     const vyMax = currentArena.isLowGravity ? 10 : 19;
@@ -1061,6 +1355,14 @@ class Fighter {
     // Auto-face target
     if (this.target) this.facing = this.target.cx() > this.cx() ? 1 : -1;
     else if (Math.abs(this.vx) > 0.5) this.facing = this.vx > 0 ? 1 : -1;
+
+    // Sync physChar torso to game position each frame (kinematic control)
+    if (this.physChar && this.physChar.active && this.physChar.alive) {
+      this.physChar.syncToGame(this.cx(), this.y + 36, this.facing);
+      if (this.attackTimer > 0 && this.weapon.type === 'melee') {
+        this.physChar.swingArm(this.facing);
+      }
+    }
 
     if (this.godmode) { this.health = this.maxHealth; }
 
@@ -1221,6 +1523,7 @@ class Fighter {
       // Damage is delivered via weapon-tip hitbox in update() — just start the swing
       if (dist(this, target) < this.weapon.range * 1.4) {
         this.weaponHit = false;
+        this.swingHitTargets.clear(); // reset multi-target tracking
       }
     } else {
       spawnBullet(this, 13, '#ffdd00');
@@ -1260,6 +1563,7 @@ class Fighter {
     spawnParticles(this.cx(), this.cy(), '#ffd700',    12);
     this.attackTimer = this.attackDuration * 3;
     this.weaponHit   = false;
+    if (!this.isBoss) this.invincible = Math.max(this.invincible, 90); // 1.5s i-frames on super
     const superMoves = {
       sword:  () => {
         this.vx = this.facing * 24;
@@ -1301,6 +1605,7 @@ class Fighter {
           if (d.health <= 0) continue;
           if (dist(this, d) < 280) dealDamage(this, d, 15, 50);
         }
+        if (this.isBoss) this.postSpecialPause = 90; // 1.5s pause after super
       }
     };
     (superMoves[this.weaponKey] || superMoves.sword)();
@@ -1468,7 +1773,7 @@ class Fighter {
   // ---- DRAW ----
   draw() {
     if (this.backstageHiding) return;
-    if (this.health <= 0 && this.invincible < 90) return;
+    if (this.health <= 0 && !this.isBoss) return; // MJS ragdolls handle dead fighter visuals
 
     ctx.save();
 
@@ -1488,16 +1793,88 @@ class Fighter {
 
     const cx = this.cx();
     const ty = this.y;
+    const f  = this.facing;
+    const s  = this.state;
+    const t  = this.animTimer;
 
+    // ---- PhysChar rendering for non-boss fighters ----
+    if (this.physChar && this.physChar.active) {
+      const pc   = this.physChar;
+      const psc  = pc.scale;
+      const hp   = pc.head.position,  tp2  = pc.torso.position,
+            rUAp = pc.rUA.position,   lUAp = pc.lUA.position,
+            rLAp = pc.rLA.position,   lLAp = pc.lLA.position,
+            rLp  = pc.rLeg.position,  lLp  = pc.lLeg.position;
+      const tTop = { x: tp2.x, y: tp2.y - 12*psc }, tBot = { x: tp2.x, y: tp2.y + 12*psc };
+      ctx.strokeStyle = this.color; ctx.fillStyle = this.color;
+      ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const dl = (a, b) => { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); };
+      // Head
+      ctx.fillStyle = this.color;
+      ctx.beginPath(); ctx.arc(hp.x, hp.y, 9, 0, Math.PI * 2); ctx.fill();
+      // Eyes
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(hp.x + f*3, hp.y - 2, 2.5, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = s === 'hurt' ? '#ff0000' : '#111';
+      ctx.beginPath(); ctx.arc(hp.x + f*4.2, hp.y - 2, 1.3, 0, Math.PI*2); ctx.fill();
+      // Mouth
+      ctx.strokeStyle = s === 'hurt' || s === 'attacking' ? '#ff3333' : 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      if (s === 'hurt') ctx.arc(hp.x + f*3, hp.y + 3, 3, 0, Math.PI);
+      else              ctx.arc(hp.x + f*3, hp.y + 2, 3, 0, Math.PI, true);
+      ctx.stroke();
+      // Spine + limbs
+      ctx.strokeStyle = this.color; ctx.lineWidth = 2.5;
+      dl(hp, tTop); dl(tTop, tBot);
+      dl(tTop, rUAp); dl(rUAp, rLAp);
+      dl(tTop, lUAp); dl(lUAp, lLAp);
+      // Weapon at right-arm tip (use script-based angle for consistent hitbox feel)
+      const rAng = Math.atan2(rLAp.y - rUAp.y, rLAp.x - rUAp.x);
+      this.drawWeapon(rLAp.x, rLAp.y, rAng, s === 'attacking', null, 1.5);
+      // Legs
+      dl(tBot, rLp); dl(tBot, lLp);
+      // Shield bubble
+      if (this.shielding) {
+        ctx.beginPath(); ctx.arc(cx + f*15, tp2.y, 23, 0, Math.PI*2);
+        ctx.strokeStyle = 'rgba(100,210,255,0.88)'; ctx.lineWidth = 3; ctx.stroke();
+        ctx.fillStyle = 'rgba(100,210,255,0.14)'; ctx.fill();
+      }
+      // Stun stars
+      if (this.stunTimer > 0) {
+        ctx.save(); ctx.globalAlpha = Math.min(1, this.stunTimer / 15);
+        for (let i = 0; i < 3; i++) {
+          const starA = t * 0.14 + (i * Math.PI * 2 / 3);
+          ctx.fillStyle = i % 2 === 0 ? '#ffdd00' : '#fff';
+          ctx.font = '10px Arial'; ctx.textAlign = 'center';
+          ctx.fillText('★', cx + Math.cos(starA)*15, ty - 4 + Math.sin(starA*2)*5);
+        }
+        ctx.restore();
+      }
+      // Super flash
+      if (this.superFlashTimer > 0) {
+        const pulse = Math.abs(Math.sin(this.superFlashTimer * 0.18));
+        ctx.save(); ctx.globalAlpha = Math.min(1, this.superFlashTimer / 20);
+        ctx.font = `bold ${12 + Math.floor(pulse*4)}px Arial`;
+        ctx.fillStyle = '#ffd700'; ctx.textAlign = 'center';
+        ctx.shadowColor = '#ff8800'; ctx.shadowBlur = 10 + pulse * 8;
+        ctx.fillText('SUPER!', cx, ty - 20); ctx.restore();
+      }
+      // Name tag
+      ctx.globalAlpha = 1; ctx.font = 'bold 10px Arial'; ctx.fillStyle = this.color;
+      ctx.textAlign = 'center'; ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 4;
+      ctx.fillText(this.name, cx, ty - 5); ctx.shadowBlur = 0;
+      ctx.restore();
+      return;
+    }
+
+    // ---- Original scripted animation (Boss only path) ----
     // Ragdoll body rotation — use accumulated angular momentum
     if (this.ragdollTimer > 0) {
       ctx.translate(cx, ty + this.h * 0.45);
       ctx.rotate(this.ragdollAngle);
       ctx.translate(-cx, -(ty + this.h * 0.45));
     }
-    const f  = this.facing;
-    const s  = this.state;
-    const t  = this.animTimer;
 
     const headR     = 9;
     const headCY    = ty + headR + 1;
@@ -1593,9 +1970,10 @@ class Fighter {
     ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(lEx, lEy); ctx.stroke();
 
     // WEAPON in right hand (boss draws gauntlet on both hands for visual flair)
-    this.drawWeapon(rEx, rEy, rAng, s === 'attacking');
+    const weapScale = this.isBoss ? 1.0 : 1.5;
+    this.drawWeapon(rEx, rEy, rAng, s === 'attacking', null, weapScale);
     if (this.isBoss && this.weaponKey === 'gauntlet') {
-      this.drawWeapon(lEx, lEy, lAng + Math.PI, s === 'attacking', 'gauntlet');
+      this.drawWeapon(lEx, lEy, lAng + Math.PI, s === 'attacking', 'gauntlet', weapScale);
     }
 
     // LEGS
@@ -1671,10 +2049,11 @@ class Fighter {
     ctx.restore();
   }
 
-  drawWeapon(hx, hy, angle, attacking, overrideKey = null) {
+  drawWeapon(hx, hy, angle, attacking, overrideKey = null, scale = 1) {
     ctx.save();
     ctx.translate(hx, hy);
     ctx.rotate(angle + (attacking ? 0.6 : 0));
+    if (scale !== 1) ctx.scale(scale, scale);
     ctx.lineCap   = 'round';
 
     const k = overrideKey || this.weaponKey;
@@ -1985,9 +2364,13 @@ class Boss extends Fighter {
     this.forcedTeleportFlash = 0;
     // Spike attacks
     this.spikeCooldown  = 1200; // 20 seconds initial
+    // Post-special pause (boss stops attacking for 1.5s after specials)
+    this.postSpecialPause = 0;
     // Monologue tracking
     this.phaseDialogueFired = new Set();
     this._maxLives          = 1; // boss shows phase indicator, not hearts
+    // Boss uses original scripted animation — destroy physChar from Fighter base
+    if (this.physChar) { this.physChar.destroy(); this.physChar = null; }
   }
 
   getPhase() {
@@ -2001,23 +2384,27 @@ class Boss extends Fighter {
     if (this.backstageHiding) return;
     if (this.cooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
     // Gauntlet is melee-only — start swing, damage delivered via weapon-tip hitbox
-    if (dist(this, target) < this.weapon.range * 1.4) this.weaponHit = false;
+    if (dist(this, target) < this.weapon.range * 1.4) { this.weaponHit = false; this.swingHitTargets.clear(); }
     this.cooldown    = Math.max(1, Math.ceil(this.weapon.cooldown * (this.attackCooldownMult || 0.5)));
     this.attackTimer = this.attackDuration;
   }
 
-  // Override ability: half cooldown
+  // Override ability: half cooldown + 1.5s post-special pause
   ability(target) {
     if (this.abilityCooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
     this.weapon.ability(this, target);
-    this.abilityCooldown = Math.max(1, Math.ceil(this.weapon.abilityCooldown * (this.attackCooldownMult || 0.5)));
-    this.attackTimer     = this.attackDuration * 2;
+    this.abilityCooldown  = Math.max(1, Math.ceil(this.weapon.abilityCooldown * (this.attackCooldownMult || 0.5)));
+    this.attackTimer      = this.attackDuration * 2;
+    this.postSpecialPause = 90; // 1.5s pause after void slam ability
   }
 
   // Override AI: phase-based, more aggressive, respects shield cooldown
   updateAI() {
     if (this.aiReact > 0) { this.aiReact--; return; }
     if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
+    // Post-special pause: boss moves but doesn't attack for 1.5s after specials
+    if (this.postSpecialPause > 0) this.postSpecialPause--;
+    const canAct = this.postSpecialPause <= 0;
 
     // In 2P boss mode, always target the nearest alive human player
     if (gameMode === 'boss2p') {
@@ -2117,17 +2504,17 @@ class Boss extends Fighter {
         break;
       case 'attack':
         this.vx *= 0.75;
-        if (Math.random() < atkFreq)       this.attack(t);
-        if (Math.random() < abiFreq)       this.ability(t);
-        if (this.superReady && Math.random() < (phase === 3 ? 0.15 : 0.10)) this.useSuper(t);
+        if (canAct && Math.random() < atkFreq)       this.attack(t);
+        if (canAct && Math.random() < abiFreq)       this.ability(t);
+        if (canAct && this.superReady && Math.random() < (phase === 3 ? 0.15 : 0.10)) this.useSuper(t);
         if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.05) this.vy = -17;
         break;
       case 'evade': {
         const eDir  = -dir;
         const eEdge = this.isEdgeDanger(eDir);
         if (!eEdge) this.vx = eDir * spd * 1.2;
-        else if (Math.random() < atkFreq)  this.attack(t);
-        if (Math.random() < atkFreq * 0.5) this.attack(t);
+        else if (canAct && Math.random() < atkFreq)  this.attack(t);
+        if (canAct && Math.random() < atkFreq * 0.5) this.attack(t);
         break;
       }
     }
@@ -2135,10 +2522,10 @@ class Boss extends Fighter {
     // Phase 3 bonus: aggressive jumps + burst attacks
     if (phase === 3) {
       if (this.onGround && !edgeDanger && Math.random() < 0.030) this.vy = -17;
-      if (Math.random() < 0.035) this.attack(t);
+      if (canAct && Math.random() < 0.035) this.attack(t);
     }
 
-    // Teleport (phase 2+)
+    // Teleport (phase 2+) — NOT blocked by postSpecialPause
     if (phase >= 2) {
       if (this.teleportCooldown > 0) {
         this.teleportCooldown--;
@@ -2149,26 +2536,27 @@ class Boss extends Fighter {
     }
 
     // Ability more often when target is close
-    if (t && dist(this, t) < 120 && Math.random() < 0.06) this.ability(t);
+    if (canAct && t && dist(this, t) < 120 && Math.random() < 0.06) this.ability(t);
 
     // Boss leads attacks when player moves toward it
-    if (t && t.vx !== 0) {
+    if (canAct && t && t.vx !== 0) {
       const playerMovingToward = (t.cx() < this.cx() && t.vx > 0) || (t.cx() > this.cx() && t.vx < 0);
       if (playerMovingToward && dist(this, t) < this.weapon.range * 2 && Math.random() < 0.15) {
         this.attack(t);
       }
     }
 
-    // Spike attacks
+    // Spike attacks (blocked by postSpecialPause)
     if (this.spikeCooldown > 0) {
       this.spikeCooldown--;
-    } else if (phase >= 2 && t) {
+    } else if (canAct && phase >= 2 && t) {
       const numSpikes = 5;
       for (let i = 0; i < numSpikes; i++) {
         const sx = clamp(t.cx() + (i - 2) * 35, 20, 880);
         bossSpikes.push({ x: sx, maxH: 90 + Math.random() * 50, h: 0, phase: 'rising', stayTimer: 0, done: false });
       }
       this.spikeCooldown = phase === 3 ? 480 : 720;
+      this.postSpecialPause = 90; // 1.5s pause after spawning spikes
       showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!']));
     }
 
@@ -2187,10 +2575,10 @@ class Boss extends Fighter {
       showBossDialogue(randChoice(['Deal with my guests!', 'MINIONS, arise!', 'Handle this!', 'You\'ll need backup...']));
     }
 
-    // Beam attacks — summons floor beams with 5-second warning (phase 2+)
+    // Beam attacks — summons floor beams with 5-second warning (blocked by postSpecialPause)
     if (this.beamCooldown > 0) {
       this.beamCooldown--;
-    } else if (phase >= 2 && t) {
+    } else if (canAct && phase >= 2 && t) {
       const numBeams = phase === 3 ? 3 : 2;
       for (let i = 0; i < numBeams; i++) {
         const spread = (i - Math.floor(numBeams / 2)) * 95;
@@ -2198,6 +2586,7 @@ class Boss extends Fighter {
         bossBeams.push({ x: bx, warningTimer: 300, activeTimer: 0, phase: 'warning', done: false });
       }
       this.beamCooldown = phase === 3 ? 400 : 560;
+      this.postSpecialPause = 90; // 1.5s pause after summoning beams
       showBossDialogue(randChoice(['Nowhere to hide!', 'Feel the void!', 'Dodge THIS!', 'From below!', 'The light will take you!']));
     }
 
@@ -2707,12 +3096,20 @@ function checkDeaths() {
       // Boss defeat: trigger cinematic scene instead of normal death
       if (p.isBoss && !bossDeathScene) { startBossDeathScene(p); continue; }
       if (p.isBoss && bossDeathScene)  { continue; } // handled by death scene
+      const _releasePhysChar = (p) => {
+        if (p.physChar) {
+          p.physChar.release(p.vx, p.vy - 4);
+          activeRagdolls.push(p.physChar);
+          p.physChar = null;
+        } else {
+          activeRagdolls.push(new RagdollBody(p.cx(), p.y + p.h * 0.45, p.vx, p.vy - 4, p.color, p.drawScale || 1));
+        }
+      };
       if (trainingMode && !p.isBoss) {
         // Training mode: player respawns infinitely, no game-over
         addKillFeed(p);
+        _releasePhysChar(p);
         p.invincible = 999;
-        p.ragdollTimer = 55;
-        p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.12 + Math.random() * 0.14);
         p.vy = -10; p.vx = (Math.random() - 0.5) * 14;
         respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
         setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
@@ -2721,6 +3118,7 @@ function checkDeaths() {
         const other = players.find(q => q !== p);
         if (other) { if (p === players[0]) winsP2++; else winsP1++; }
         addKillFeed(p);
+        _releasePhysChar(p);
         p.invincible = 999;
         respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
         setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
@@ -2728,6 +3126,7 @@ function checkDeaths() {
         p.lives--;
         p.invincible = 999; // block re-trigger until respawn clears it
         addKillFeed(p);
+        _releasePhysChar(p);
         if (p.lives > 0) {
           respawnCountdowns.push({ color: p.color, x: p.spawnX, y: p.spawnY - 80, framesLeft: 66 });
           setTimeout(() => { if (gameRunning) p.respawn(); }, 1100);
@@ -2736,24 +3135,16 @@ function checkDeaths() {
           const boss = players.find(q => q.isBoss);
           if (boss && boss.health < 1000 && !fakeDeath.triggered && (gameMode === 'boss' || gameMode === 'boss2p')) {
             triggerFakeDeath(p);
-          } else {
-            // Check if other human players are still alive (2P boss mode)
+          } else if (gameMode === 'boss2p') {
+            // In 2P boss co-op: only delay end if teammate is still alive
             const otherHumansAlive = players.some(q => !q.isBoss && q !== p && q.lives > 0 && q.health > 0);
             if (otherHumansAlive) {
-              // Stay dead but don't end game — teammate still fighting
-              p.ragdollTimer = 90;
-              p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.18 + Math.random() * 0.18);
-              p.vy           = -14 - Math.random() * 6;
-              p.vx           = (Math.random() - 0.5) * 20;
-              p.invincible   = 9999; // stay dead
+              p.invincible = 9999; // stay dead, teammate still fighting
             } else {
-              // Launch death ragdoll
-              p.ragdollTimer = 90;
-              p.ragdollSpin  = (Math.random() > 0.5 ? 1 : -1) * (0.18 + Math.random() * 0.18);
-              p.vy           = -14 - Math.random() * 6;
-              p.vx           = (Math.random() - 0.5) * 20;
               setTimeout(endGame, 900);
             }
+          } else {
+            setTimeout(endGame, 900);
           }
         }
       }
@@ -2781,8 +3172,14 @@ function endGame() {
   const wt     = document.getElementById('winnerText');
   if (winner) { wt.textContent = winner.name + ' WINS!'; wt.style.color = winner.color; }
   else        { wt.textContent = 'DRAW!';                wt.style.color = '#ffffff'; }
-  document.getElementById('statsDisplay').innerHTML =
-    players.map(p => `<div class="stat-row" style="color:${p.color}">${p.name}: ${p.kills} KO${p.kills !== 1 ? 's' : ''}</div>`).join('');
+  let statsHtml = players.map(p => `<div class="stat-row" style="color:${p.color}">${p.name}: ${p.kills} KO${p.kills !== 1 ? 's' : ''}</div>`).join('');
+  // Boss defeated: reveal unlock code
+  const defeatedBoss = players.find(p => p.isBoss && p.health <= 0);
+  if (defeatedBoss && winner && !winner.isBoss) {
+    statsHtml += '<div class="stat-row" style="color:#cc00ee;margin-top:10px;font-size:11px;letter-spacing:1px">' +
+                 '&#x1F3C6; Unlock code: <b style="letter-spacing:3px;color:#ff88ff">TRUEFORM</b></div>';
+  }
+  document.getElementById('statsDisplay').innerHTML = statsHtml;
   document.getElementById('gameOverOverlay').style.display = 'flex';
 }
 
@@ -2840,6 +3237,8 @@ function updateHUD() {
       hEl.style.width      = pct + '%';
       hEl.style.background = `hsl(${pct * 1.2},100%,44%)`;
     }
+    const htEl = document.getElementById(`p${n}HealthText`);
+    if (htEl) htEl.textContent = Math.ceil(p.health) + '/' + p.maxHealth;
     if (lEl) {
       if (p.isBoss) {
         // Boss: show a phase indicator instead of hearts
@@ -3574,6 +3973,13 @@ function gameLoop() {
   players.forEach(p => { if (p.health > 0 || p.invincible > 0) p.draw(); });
   drawSpartanRageEffects();
   drawClassEffects();
+
+  // Matter.js ragdoll bodies — step engine then draw/prune
+  Matter.Engine.update(ragEngine, 1000 / 60);
+  for (let ri = activeRagdolls.length - 1; ri >= 0; ri--) {
+    activeRagdolls[ri].draw();
+    if (!activeRagdolls[ri].active) activeRagdolls.splice(ri, 1);
+  }
   if (bossDeathScene) drawBossDeathScene();
   updateMapPerks();
   updateFakeDeathScene();
@@ -3678,7 +4084,8 @@ document.addEventListener('keyup', e => {
   delete keyHeldFrames[e.key];
 });
 
-const BOOST_HOLD    = 14;   // frames to hold before boost fires
+const BOOST_HOLD    = 14;   // frames to hold before vertical super-jump fires
+const BOOST_HOLD_H  = 28;   // frames to hold before horizontal dash fires (longer to avoid accidental triggers)
 const BOOST_VX      = 16;   // horizontal dash speed
 const BOOST_VY      = -22;  // super-jump velocity
 const BOOST_CD      = 60;   // frames before next boost
@@ -3729,9 +4136,38 @@ function processInput() {
       spawnParticles(p.cx(), p.cy(),    '#ffffff',  5);
     }
 
-    // --- Directional boost (hold threshold) ---
+    // --- Double-tap dash (tap same direction within 14 frames) ---
+    const DTAP_WIN = 14; // frames for double-tap window
+    if (lHeld === 1) {
+      if (p.boostCooldown === 0 && frameCount - p._lastTapLeft <= DTAP_WIN) {
+        p.vx = -BOOST_VX;
+        p.boostCooldown = BOOST_CD;
+        spawnParticles(p.cx(), p.cy(), '#00d4ff', 10);
+        spawnParticles(p.cx(), p.cy(), '#ffffff', 4);
+        if (p.charClass === 'thor') { spawnRing(p.cx(), p.cy()); if (p.target && dist(p, p.target) < 130) dealDamage(p, p.target, 8, 6); }
+        if (p.charClass === 'ninja') p.boostCooldown = 20;
+        p._lastTapLeft = -999;
+      } else {
+        p._lastTapLeft = frameCount;
+      }
+    }
+    if (rHeld === 1) {
+      if (p.boostCooldown === 0 && frameCount - p._lastTapRight <= DTAP_WIN) {
+        p.vx = BOOST_VX;
+        p.boostCooldown = BOOST_CD;
+        spawnParticles(p.cx(), p.cy(), '#00d4ff', 10);
+        spawnParticles(p.cx(), p.cy(), '#ffffff', 4);
+        if (p.charClass === 'thor') { spawnRing(p.cx(), p.cy()); if (p.target && dist(p, p.target) < 130) dealDamage(p, p.target, 8, 6); }
+        if (p.charClass === 'ninja') p.boostCooldown = 20;
+        p._lastTapRight = -999;
+      } else {
+        p._lastTapRight = frameCount;
+      }
+    }
+
+    // --- Directional boost (hold threshold — uses BOOST_HOLD_H to avoid conflicting with double-tap) ---
     if (p.boostCooldown === 0) {
-      if (lHeld === BOOST_HOLD && keysDown.has(p.controls.left)) {
+      if (lHeld === BOOST_HOLD_H && keysDown.has(p.controls.left)) {
         p.vx = -BOOST_VX;
         p.boostCooldown = BOOST_CD;
         spawnParticles(p.cx(), p.cy(), '#00d4ff', 8);
@@ -3743,7 +4179,7 @@ function processInput() {
         // Ninja: reduced dash cooldown
         if (p.charClass === 'ninja') p.boostCooldown = 20;
       }
-      if (rHeld === BOOST_HOLD && keysDown.has(p.controls.right)) {
+      if (rHeld === BOOST_HOLD_H && keysDown.has(p.controls.right)) {
         p.vx = BOOST_VX;
         p.boostCooldown = BOOST_CD;
         spawnParticles(p.cx(), p.cy(), '#00d4ff', 8);
@@ -3781,6 +4217,20 @@ function processInput() {
 }
 
 // ============================================================
+// EXPERIMENTAL CODE SYSTEM
+// ============================================================
+function applyCode(val) {
+  const code  = (val || '').trim().toUpperCase();
+  const msgEl = document.getElementById('codeMessage');
+  if (code === 'TRUEFORM') {
+    unlockedTrueBoss = true;
+    if (msgEl) { msgEl.textContent = '\u2713 True Creator unlocked! Start a boss fight.'; msgEl.style.color = '#cc00ee'; }
+  } else {
+    if (msgEl) { msgEl.textContent = '\u2717 Unknown code.'; msgEl.style.color = '#ff4444'; }
+  }
+}
+
+// ============================================================
 // MENU UI HANDLERS
 // ============================================================
 function selectMode(mode) {
@@ -3792,9 +4242,9 @@ function selectMode(mode) {
   const isBoss2p   = mode === 'boss2p';
   const isTraining = mode === 'training';
   // Boss 1P: hide P2 controls. Boss 2P: show P2 controls.
-  document.getElementById('p2Title').textContent          = isBoss ? 'CREATOR' : (isBoss2p ? 'Player 2' : (isBot ? 'BOT' : (isTraining ? 'TRAINING' : 'Player 2')));
-  document.getElementById('p2Hint').textContent           = isBoss ? 'Boss — AI Controlled' : (isBoss2p ? '← → ↑ move · Enter attack · . ability · / super · ↓ shield' : (isBot ? 'AI Controlled' : (isTraining ? 'Practice mode' : '← → ↑ move · Enter attack · . ability · / super · ↓ shield')));
-  document.getElementById('difficultyRow').style.display  = isBot  ? 'flex'  : 'none';
+  document.getElementById('p2Title').textContent          = isBoss ? 'CREATOR' : (isBoss2p ? 'Player 2' : (isBot || p2IsBot ? 'BOT' : (isTraining ? 'TRAINING' : 'Player 2')));
+  document.getElementById('p2Hint').textContent           = isBoss ? 'Boss — AI Controlled' : (isBoss2p ? '← → ↑ move · Enter attack · . ability · / super · ↓ shield' : (isBot || p2IsBot ? 'AI Controlled' : (isTraining ? 'Practice mode' : '← → ↑ move · Enter attack · . ability · / super · ↓ shield')));
+  document.getElementById('difficultyRow').style.display  = (isBot || p1IsBot || p2IsBot) ? 'flex' : 'none';
   document.getElementById('p2ColorRow').style.display     = (isBoss || isTraining) ? 'none'  : 'flex';
   document.getElementById('p2WeaponRow').style.display    = (isBoss || isTraining) ? 'none'  : 'flex';
   document.getElementById('p2ClassRow').style.display     = (isBoss || isTraining) ? 'none'  : 'flex';
@@ -3808,6 +4258,20 @@ function selectMode(mode) {
     infiniteMode = false;
     selectLives(3);
   }
+}
+
+function toggleBot(pid) {
+  if (pid === 'p1') {
+    p1IsBot = !p1IsBot;
+    const btn = document.getElementById('p1BotToggle');
+    if (btn) btn.textContent = p1IsBot ? '\uD83E\uDD16 Bot' : '\uD83E\uDDD1 Human';
+  } else {
+    p2IsBot = !p2IsBot;
+    const btn = document.getElementById('p2BotToggle');
+    if (btn) btn.textContent = p2IsBot ? '\uD83E\uDD16 Bot' : '\uD83E\uDDD1 Human';
+  }
+  // Refresh mode UI to reflect updated bot state
+  selectMode(gameMode);
 }
 
 function selectArena(name) {
@@ -3905,8 +4369,10 @@ function startGame() {
     const arenaPool = Object.keys(ARENAS).filter(k => k !== 'creator');
     currentArenaKey = selectedArena === 'random' ? randChoice(arenaPool) : selectedArena;
   }
-  if (currentArenaKey !== 'creator') randomizeArenaLayout(currentArenaKey);
+  // Lava: no randomization — no floor platform means random shifts cause unsafe spawns
+  if (currentArenaKey !== 'creator' && currentArenaKey !== 'lava') randomizeArenaLayout(currentArenaKey);
   currentArena = ARENAS[currentArenaKey];
+  buildPhysicsWorldForArena(currentArena);
   initMapPerks(currentArenaKey);
 
   // Resolve weapons & colours
@@ -3915,7 +4381,7 @@ function startGame() {
   const c1   = document.getElementById('p1Color').value;
   const c2   = document.getElementById('p2Color').value;
   const diff = document.getElementById('difficulty').value;
-  const isBot = gameMode === 'bot';
+  const isBot = gameMode === 'bot' || p2IsBot;
 
   // Generate bg elements fresh each game
   generateBgElements();
@@ -3926,6 +4392,13 @@ function startGame() {
   particles          = [];
   damageTexts        = [];
   respawnCountdowns  = [];
+  // Clear physChars from previous game's players before creating new ones
+  for (const p of players) {
+    if (p && p.physChar) { p.physChar.destroy(); p.physChar = null; }
+  }
+  // Clear Matter.js ragdolls from previous game
+  for (const rd of activeRagdolls) rd.destroy();
+  activeRagdolls.length = 0;
   minions            = [];
   bossBeams          = [];
   bossSpikes         = [];
@@ -3955,8 +4428,8 @@ function startGame() {
   }
 
   // Player 1  (W/A/D move+boost · S=shield · Space=attack · Q=ability)
-  const p1 = new Fighter(160, 300, c1, w1, { left:'a', right:'d', jump:'w', attack:' ', shield:'s', ability:'q', super:'e' }, false);
-  p1.playerNum = 1; p1.name = 'P1'; p1.lives = chosenLives;
+  const p1 = new Fighter(160, 300, c1, w1, { left:'a', right:'d', jump:'w', attack:' ', shield:'s', ability:'q', super:'e' }, p1IsBot, diff);
+  p1.playerNum = 1; p1.name = p1IsBot ? 'BOT1' : 'P1'; p1.lives = chosenLives;
   p1.spawnX = 160; p1.spawnY = 300;
   applyClass(p1, getClassChoice('p1Class'));
 
@@ -3964,6 +4437,16 @@ function startGame() {
   let p2;
   if (isBossMode || gameMode === 'boss2p') {
     const boss = new Boss();
+    // True Creator mode: significantly harder boss (requires TRUEFORM code)
+    if (unlockedTrueBoss) {
+      boss.health            = 3000;
+      boss.maxHealth         = 3000;
+      boss.attackCooldownMult = 0.30;
+      boss.kbBonus           = 2.5;
+      boss.kbResist          = 0.25;
+      boss.name              = 'TRUE CREATOR';
+      boss.color             = '#ff00ee';
+    }
     if (gameMode === 'boss2p') {
       // 2P boss: harder boss
       boss.attackCooldownMult = 0.38; // ~1.3x faster attacks than 1P
@@ -3995,11 +4478,21 @@ function startGame() {
     p1.target = p2; p2.target = p1;
   } else {
     p2 = new Fighter(720, 300, c2, w2, { left:'ArrowLeft', right:'ArrowRight', jump:'ArrowUp', attack:'Enter', shield:'ArrowDown', ability:'Shift', super:'/' }, isBot, diff);
-    p2.playerNum = 2; p2.name = isBot ? 'BOT' : 'P2'; p2.lives = chosenLives;
+    p2.playerNum = 2; p2.name = (gameMode === 'bot' || p2IsBot) ? 'BOT' : 'P2'; p2.lives = chosenLives;
     p2.spawnX = 720; p2.spawnY = 300;
     applyClass(p2, getClassChoice('p2Class'));
     players = [p1, p2];
     p1.target = p2; p2.target = p1;
+  }
+
+  // Lava arena: override spawn positions to ensure players land on solid platforms
+  if (currentArenaKey === 'lava') {
+    p1.spawnX = 236; p1.spawnY = 260; // above upper-left platform (x=178,y=278)
+    p1.x = 236; p1.y = 200;
+    if (p2 && !p2.isBoss) {
+      p2.spawnX = 640; p2.spawnY = 260; // above upper-right platform (x=582,y=278)
+      p2.x = 640; p2.y = 200;
+    }
   }
 
   // Training mode: show in-game HUD
@@ -4021,19 +4514,14 @@ function startGame() {
 // FULLSCREEN / RESIZE
 // ============================================================
 function resizeGame() {
-  const hud    = document.getElementById('hud');
-  const hudH   = (hud && hud.offsetHeight) || 0;
-  const availW = window.innerWidth;
-  const availH = window.innerHeight - hudH;
-  const aspect = canvas.width / canvas.height; // 900/520
+  const hud  = document.getElementById('hud');
+  const hudH = (hud && hud.offsetHeight) || 0;
+  const w    = window.innerWidth;
+  const h    = window.innerHeight - hudH;
 
-  let w = availW;
-  let h = availW / aspect;
-  if (h > availH) { h = availH; w = h * aspect; }
-
-  canvas.style.width      = Math.floor(w) + 'px';
-  canvas.style.height     = Math.floor(h) + 'px';
-  canvas.style.marginLeft = Math.floor((availW - w) / 2) + 'px';
+  canvas.style.width      = w + 'px';
+  canvas.style.height     = h + 'px';
+  canvas.style.marginLeft = '0';
   canvas.style.marginTop  = '0';
 }
 
