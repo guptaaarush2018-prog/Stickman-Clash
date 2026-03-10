@@ -39,7 +39,7 @@
         </div>
         <div class="config-row">
           <label>Weapon</label>
-          <select id="p1Weapon" onchange="showDesc('p1','weapon',this.value); if(this.value!=='random'){document.getElementById('p1Class').value='none';updateClassWeapon('p1');}">
+          <select id="p1Weapon" onchange="showDesc('p1','weapon',this.value); updateClassWeapon('p1');">
             <option value="random">Random</option>
             <option value="sword">Sword</option>
             <option value="hammer">Hammer</option>
@@ -94,8 +94,8 @@
           <label>Difficulty</label>
           <select id="p1Difficulty">
             <option value="easy">Easy</option>
-            <option value="medium" selected>Medium</option>
-            <option value="hard">Hard</option>
+            <option value="medium">Medium</option>
+            <option value="hard" selected>Hard</option>
           </select>
         </div>
         <div class="selection-desc" id="p1Desc" style="display:none">
@@ -135,11 +135,25 @@
           <div class="mode-name" style="color:#ffffff">True Form</div>
           <div class="mode-desc" style="color:#888">Face what lies beneath</div>
         </div>
+        <div class="mode-card" id="modeOnline" data-mode="online" onclick="selectMode('online')">🌐 Online</div>
       </div>
       <!-- Boss player count toggle (shown when boss mode is selected) -->
       <div id="bossPlayerToggle" style="display:none; gap:8px; margin-top:8px;">
         <button id="bpBtn1" class="btn active" onclick="setBossPlayers(1)">1 Player</button>
         <button id="bpBtn2" class="btn" onclick="setBossPlayers(2)">2 Players</button>
+      </div>
+      <!-- Online multiplayer connection panel -->
+      <div id="onlinePanel" style="display:none; flex-direction:column; gap:8px; margin-top:10px; padding:10px; background:rgba(0,100,200,0.15); border-radius:8px; border:1px solid rgba(0,150,255,0.3);">
+        <div style="display:flex; gap:6px; align-items:center;">
+          <label style="color:#88ccff; font-size:0.78rem; white-space:nowrap;">Server URL</label>
+          <input id="onlineServerUrl" type="text" value="http://localhost:3001" style="flex:1; padding:4px 7px; background:rgba(0,0,0,0.4); border:1px solid rgba(100,180,255,0.4); border-radius:5px; color:#cce; font-size:0.75rem;">
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <label style="color:#88ccff; font-size:0.78rem; white-space:nowrap;">Room Code</label>
+          <input id="onlineRoomCode" type="text" placeholder="e.g. FIGHT42" maxlength="20" style="flex:1; padding:4px 7px; background:rgba(0,0,0,0.4); border:1px solid rgba(100,180,255,0.4); border-radius:5px; color:#cce; font-size:0.75rem; text-transform:uppercase;">
+        </div>
+        <div id="onlineStatus" style="font-size:0.72rem; color:#aab; min-height:18px;"></div>
+        <button class="btn" onclick="networkJoinRoom()" style="padding:6px 18px; font-size:0.8rem;">Connect</button>
       </div>
       <!-- Minigame selection (shown when minigames mode is selected) -->
       <div id="minigamePanel" style="display:none; margin-top:10px;">
@@ -157,9 +171,9 @@
             <div class="mode-name" style="font-size:0.95rem">Chaos Match</div>
             <div class="mode-desc" style="font-size:0.72rem">1v1 with wild modifiers</div>
           </div>
-          <div class="mode-card" id="mgCardSoccer" onclick="selectMinigame('soccer')" style="padding:8px 10px;font-size:0.82rem;opacity:0.5;cursor:not-allowed;">
-            <div class="mode-name" style="font-size:0.95rem">Soccer Brawl</div>
-            <div class="mode-desc" style="font-size:0.72rem">Coming soon</div>
+          <div class="mode-card" id="mgCardSoccer" onclick="selectMinigame('soccer')" style="padding:8px 10px;font-size:0.82rem;">
+            <div class="mode-name" style="font-size:0.95rem">⚽ Soccer</div>
+            <div class="mode-desc" style="font-size:0.72rem">Score goals, not damage</div>
           </div>
         </div>
         <!-- Survival sub-options (only shown when survival is selected) -->
@@ -200,6 +214,10 @@
     <!-- TRAINING PANEL (shown only in training mode) -->
     <div id="trainingPanel" style="display:none">
       <p class="section-label">Training Tools</p>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+        <span style="font-size:0.78rem; color:#aaa;">2-Player Training:</span>
+        <button id="training2PBtn" class="btn" onclick="toggleTraining2P()" style="font-size:11px;padding:3px 8px;">2P: OFF</button>
+      </div>
       <div class="training-btns">
         <button class="btn training-btn" onclick="trainingCmd('giveSuper')">Give Super</button>
         <button class="btn training-btn" onclick="trainingCmd('noCooldowns')">No Cooldowns</button>
@@ -335,7 +353,7 @@
         </div>
         <div class="config-row" id="p2WeaponRow">
           <label>Weapon</label>
-          <select id="p2Weapon" onchange="showDesc('p2','weapon',this.value); if(this.value!=='random'){document.getElementById('p2Class').value='none';updateClassWeapon('p2');}">
+          <select id="p2Weapon" onchange="showDesc('p2','weapon',this.value); updateClassWeapon('p2');">
             <option value="random">Random</option>
             <option value="sword">Sword</option>
             <option value="hammer">Hammer</option>
@@ -394,8 +412,8 @@
           <label>Difficulty</label>
           <select id="p2Difficulty">
             <option value="easy">Easy</option>
-            <option value="medium" selected>Medium</option>
-            <option value="hard">Hard</option>
+            <option value="medium">Medium</option>
+            <option value="hard" selected>Hard</option>
           </select>
         </div>
         <div class="selection-desc" id="p2Desc" style="display:none">
@@ -607,6 +625,41 @@
   <button id="bossBeatenContinue" class="btn" style="display:none; margin-top:36px; font-size:1rem; padding:12px 32px;" onclick="closeBossBeatenScreen()">Continue</button>
 </div>
 
+<!-- Chaos Match modifier icon bar (shown only during chaos minigame) -->
+<div id="chaosModIcons" style="display:none; position:fixed; bottom:8px; left:50%; transform:translateX(-50%); flex-wrap:wrap; gap:6px; pointer-events:auto; z-index:100; justify-content:center;"></div>
+<div id="chaosModTooltip" style="display:none; position:fixed; background:rgba(0,0,0,0.9); color:#fff; padding:6px 10px; border-radius:6px; font-size:12px; pointer-events:none; z-index:200; white-space:nowrap;"></div>
+
+<!-- Training in-game spawn buttons -->
+<div id="trainingControls" style="display:none; position:fixed; bottom:10px; right:10px; z-index:100; flex-direction:column; gap:4px;">
+  <button class="btn" onclick="spawnTrainingYeti()" style="font-size:11px;padding:4px 10px;">Spawn Yeti</button>
+  <button class="btn" onclick="spawnTrainingDummy()" style="font-size:11px;padding:4px 10px;">Spawn Dummy</button>
+  <button class="btn" onclick="toggleMapCreator()" style="font-size:11px;padding:4px 10px;">Map Creator</button>
+</div>
+
+<!-- Map Creator panel -->
+<div id="mapCreatorPanel" style="display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%); background:#1a1a2e; border:2px solid #6644ff; border-radius:12px; padding:20px; z-index:500; min-width:360px; color:#fff; font-family:Arial,sans-serif;">
+  <h3 style="margin:0 0 12px; color:#8866ff;">Map Creator</h3>
+  <div style="margin-bottom:8px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+    <label style="font-size:12px;">X:</label>
+    <input id="mcX" type="number" value="200" style="width:64px;background:#0a0a1e;color:#fff;border:1px solid #444;padding:3px 5px;border-radius:4px;">
+    <label style="font-size:12px;">Y:</label>
+    <input id="mcY" type="number" value="300" style="width:64px;background:#0a0a1e;color:#fff;border:1px solid #444;padding:3px 5px;border-radius:4px;">
+    <label style="font-size:12px;">W:</label>
+    <input id="mcW" type="number" value="150" style="width:64px;background:#0a0a1e;color:#fff;border:1px solid #444;padding:3px 5px;border-radius:4px;">
+  </div>
+  <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:10px;">
+    <button class="btn" onclick="addCreatorPlatform()" style="font-size:11px;padding:4px 10px;">Add Platform</button>
+    <button class="btn" onclick="clearCreatorPlatforms()" style="font-size:11px;padding:4px 10px;">Clear All</button>
+    <button class="btn" onclick="exportCreatorMap()" style="font-size:11px;padding:4px 10px;">Export JSON</button>
+    <button class="btn" onclick="importCreatorMap()" style="font-size:11px;padding:4px 10px;">Import JSON</button>
+  </div>
+  <textarea id="mcJSON" rows="4" style="width:100%;box-sizing:border-box;background:#0a0a1e;color:#88ff88;border:1px solid #444;padding:6px;font-size:11px;font-family:monospace;border-radius:4px;" placeholder="Paste exported JSON here to import..."></textarea>
+  <div style="margin-top:8px; font-size:11px; color:#aaa;">Platforms added: <span id="mcCount">0</span></div>
+  <button onclick="toggleMapCreator()" style="position:absolute;top:10px;right:14px;background:none;border:none;color:#aaa;font-size:20px;cursor:pointer;line-height:1;">✕</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="SMC.js"></script>
 </body>
 </html>
