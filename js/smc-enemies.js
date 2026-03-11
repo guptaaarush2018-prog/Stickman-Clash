@@ -54,14 +54,29 @@ class ForestBeast extends Fighter {
     this.spawnY     = y;
     this.playerNum  = 2;
     this.dashCooldown = 120;  // initial delay before first dash
+    this._lastPhase = 1;      // for phase-transition cinematic
   }
 
   update() {
     super.update();
+
+    if (this.health <= 0) return;
+
+    // Phase transition: at 50% HP enter rage mode with cinematic
+    const fbPhase = this.health <= this.maxHealth * 0.5 ? 2 : 1;
+    if (fbPhase !== this._lastPhase) {
+      this._lastPhase = fbPhase;
+      this.isRaged = true;
+      triggerPhaseTransition(this, fbPhase);
+    }
+
+    // Block AI behavior during cinematic
+    if (activeCinematic) return;
+
     // Dash attack: charge at target when far away
     if (this.dashCooldown > 0) {
       this.dashCooldown--;
-    } else if (this.target && this.target.health > 0 && this.health > 0) {
+    } else if (this.target && this.target.health > 0) {
       const dx = this.target.cx() - this.cx();
       if (Math.abs(dx) > 180) {
         this.vx = Math.sign(dx) * 16;
@@ -202,12 +217,12 @@ class Yeti extends Fighter {
     this.isMinion     = true;
     this.w            = 40;
     this.h            = 76;
-    this.health       = 450;  // 1.5x beast
-    this.maxHealth    = 450;
+    this.health       = 200;  // reduced — mini-boss tier, not ultra-boss
+    this.maxHealth    = 200;
     this.lives        = 1;
-    this.dmgMult      = 2.25; // 1.5x beast's 1.5
-    this.kbResist     = 0.55;
-    this.kbBonus      = 2.1;  // 1.5x beast's 1.4
+    this.dmgMult      = 1.1;  // deals ~10% bonus damage (was 2.25×)
+    this.kbResist     = 0.30; // moderate KB resistance (was 0.55)
+    this.kbBonus      = 1.3;  // mild extra KB (was 2.1)
     this.classSpeedMult = 0.3; // 0.3x speed
     this.spawnX       = x;
     this.spawnY       = y;
@@ -216,6 +231,7 @@ class Yeti extends Fighter {
     this.spikeCooldown = 200;  // frames before first ice spike
     this.breathCooldown = 400;
     this.iceSpikes     = [];   // {x, y, timer, h} visual ice spikes
+    this._lastPhase    = 1;    // for phase-transition cinematic
   }
 
   update() {
@@ -226,6 +242,16 @@ class Yeti extends Fighter {
     this.vx *= 0.88;
 
     if (this.health <= 0) return;
+
+    // Phase transition: at 50% HP trigger blizzard rage cinematic
+    const yetiPhase = this.health <= this.maxHealth * 0.5 ? 2 : 1;
+    if (yetiPhase !== this._lastPhase) {
+      this._lastPhase = yetiPhase;
+      triggerPhaseTransition(this, yetiPhase);
+    }
+
+    // Block AI behavior during cinematic
+    if (activeCinematic) return;
 
     // Roar stun: stuns all nearby players
     if (this.roarCooldown > 0) this.roarCooldown--;
@@ -260,8 +286,8 @@ class Yeti extends Fighter {
     for (const p of players) {
       if (p.isBoss || p.health <= 0) continue;
       if (dist(this, p) < 220) {
-        p.stunTimer = Math.max(p.stunTimer || 0, 80);
-        dealDamage(this, p, 8, 6);
+        p.stunTimer = Math.max(p.stunTimer || 0, 50);
+        dealDamage(this, p, 4, 4);
         spawnParticles(p.cx(), p.cy(), '#88bbff', 10);
       }
     }
@@ -281,8 +307,8 @@ class Yeti extends Fighter {
         for (const p of players) {
           if (p.isBoss || p.health <= 0) continue;
           if (Math.abs(p.cx() - sx) < 28 && p.y + p.h > (currentArena.deathY || 520) - 90) {
-            dealDamage(this, p, 18, 12);
-            p.vy = -12;
+            dealDamage(this, p, 8, 7);
+            p.vy = -9;
             spawnParticles(p.cx(), p.cy(), '#aaddff', 10);
           }
         }
@@ -304,7 +330,7 @@ class Yeti extends Fighter {
         this.cy(),
         Math.cos(angle) * spd,
         Math.sin(angle) * spd,
-        this, 12, '#88ccff'
+        this, 5, '#88ccff'
       );
       proj.isIce = true;
       proj.life  = 70;

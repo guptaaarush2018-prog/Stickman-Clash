@@ -81,6 +81,92 @@ const SoundManager = (() => {
   if (localStorage.getItem('smc_sfxMute') === '1') SoundManager.setMuted(true);
 })();
 
+// ============================================================
+// MUSIC MANAGER  (YouTube IFrame API — background music only)
+// YouTube IFrame API requires an HTTP/HTTPS origin to function.
+// When opened as a local file:// the origin is 'null' and postMessage
+// will fail. We detect this and return a silent no-op stub instead.
+// ============================================================
+const MusicManager = (() => {
+  // Detect file:// context — YouTube API cannot work here
+  const _isLocal = (location.protocol === 'file:');
+  if (_isLocal) {
+    // Suppress YouTube script loading and return no-op stub
+    console.info('[MusicManager] Running on file://, YouTube music disabled. Use a local server for music.');
+    return { playBoss(){}, playNormal(){}, stop(){}, setMuted(){}, isMuted(){ return true; }, toggle(){} };
+  }
+
+  const BOSS_VID   = 'LsRdmuTmU4k';
+  const NORMAL_VID = 'GO_ygNZbmqs';
+  const MUSIC_VOL  = 20; // 0-100, kept low so SFX are audible
+
+  let _bossPlayer   = null;
+  let _normalPlayer = null;
+  let _ready        = false; // true once both players are created
+  let _bossReady    = false;
+  let _normalReady  = false;
+  let _muted        = (localStorage.getItem('smc_musicMute') === '1');
+  let _current      = null;  // 'boss' | 'normal' | null
+  let _pendingTrack = null;  // track queued before API ready
+
+  function _tryPlay(track) {
+    if (!_ready) { _pendingTrack = track; return; }
+    if (_muted)  return;
+    if (track === _current) return; // already playing
+    // Stop whichever is playing
+    try { _bossPlayer.pauseVideo();   } catch(e) {}
+    try { _normalPlayer.pauseVideo(); } catch(e) {}
+    _current = track;
+    try {
+      if (track === 'boss')   { _bossPlayer.setVolume(MUSIC_VOL);   _bossPlayer.playVideo();   }
+      if (track === 'normal') { _normalPlayer.setVolume(MUSIC_VOL); _normalPlayer.playVideo(); }
+    } catch(e) {}
+  }
+
+  function _checkReady() {
+    if (_bossReady && _normalReady) {
+      _ready = true;
+      if (_pendingTrack) { const t = _pendingTrack; _pendingTrack = null; _tryPlay(t); }
+    }
+  }
+
+  // Called by YouTube API when script loads
+  window.onYouTubeIframeAPIReady = function() {
+    try {
+      _bossPlayer = new YT.Player('ytBossPlayer', {
+        videoId: BOSS_VID,
+        playerVars: { autoplay: 0, controls: 0, loop: 1, playlist: BOSS_VID, playsinline: 1, origin: location.origin },
+        events: { onReady() { _bossReady = true; _checkReady(); } }
+      });
+      _normalPlayer = new YT.Player('ytNormalPlayer', {
+        videoId: NORMAL_VID,
+        playerVars: { autoplay: 0, controls: 0, loop: 1, playlist: NORMAL_VID, playsinline: 1, origin: location.origin },
+        events: { onReady() { _normalReady = true; _checkReady(); } }
+      });
+    } catch(e) {
+      console.warn('[MusicManager] YouTube player init failed:', e.message);
+    }
+  };
+
+  return {
+    playBoss()   { _tryPlay('boss');   },
+    playNormal() { _tryPlay('normal'); },
+    stop() {
+      _current = null;
+      try { _bossPlayer.pauseVideo();   } catch(e) {}
+      try { _normalPlayer.pauseVideo(); } catch(e) {}
+    },
+    setMuted(m) {
+      _muted = m;
+      localStorage.setItem('smc_musicMute', m ? '1' : '0');
+      if (m) { try { _bossPlayer.pauseVideo();   } catch(e) {} try { _normalPlayer.pauseVideo(); } catch(e) {} }
+      else if (_current) _tryPlay(_current);
+    },
+    isMuted()  { return _muted; },
+    toggle()   { this.setMuted(!_muted); },
+  };
+})();
+
 function toggleSfxMute() {
   const m = !SoundManager.isMuted();
   SoundManager.setMuted(m);

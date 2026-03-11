@@ -207,6 +207,7 @@ function spawnSurvivalWave() {
       { left:null, right:null, jump:null, attack:null, ability:null, super:null }, true, diff);
     bot.name     = `W${survivalWave}#${i + 1}`;
     bot.lives    = 1;
+    bot.personality = randChoice(['aggressive', 'defensive', 'trickster', 'sniper']);
     bot.dmgMult  = Math.min(0.5 + survivalWave * 0.06, 1.0); // starts at 0.56x, scales to 1x by wave 8+
     bot.target   = targets[i % targets.length];
     bot.playerNum = 2;

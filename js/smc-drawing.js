@@ -82,6 +82,7 @@ function drawVoidArena() {
 
   // When floor is removed: orange lava rises from below
   if (tfFloorRemoved) {
+    ctx.globalAlpha = 1;
     const ly = 460;
     const lg = ctx.createLinearGradient(0, ly, 0, GAME_H);
     lg.addColorStop(0,   '#ff6600');
@@ -604,21 +605,24 @@ function endGame() {
   document.getElementById('hud').style.display = 'none';
   const isBossModeEnd = gameMode === 'boss' || gameMode === 'trueform';
   const alive  = players.filter(p => p.lives > 0 && !(isBossModeEnd && p.isBoss));
+  const bossDefeated = isBossModeEnd && alive.length > 0 && players.some(p => p.isBoss && p.health <= 0);
   const winner = alive.length === 1 ? alive[0]
                : (alive.length === 0 && isBossModeEnd) ? players.find(p => p.isBoss)
                : null;
 
   // --- Achievement checks on match end ---
-  if (winner && !winner.isBoss) {
+  // For 2P boss co-op win, treat any survivor as the "winner" for achievements
+  const achievWinner = winner || (bossDefeated ? alive[0] : null);
+  if (achievWinner && !achievWinner.isBoss) {
     _achStats.totalWins++;
     _achStats.winStreak++;
     // First Blood: only when beating a hard AI bot
-    const loser = players.find(p => p !== winner && p.isAI && p.aiDiff === 'hard');
+    const loser = players.find(p => p !== achievWinner && p.isAI && p.aiDiff === 'hard');
     if (loser) unlockAchievement('first_blood');
     if (_achStats.totalWins >= 10) unlockAchievement('perfectionist');
     if (_achStats.winStreak >= 3)  unlockAchievement('hat_trick');
     // Win with ≤10 HP
-    if (winner.health <= 10) unlockAchievement('survivor');
+    if (achievWinner.health <= 10) unlockAchievement('survivor');
     // Untouchable: won without taking damage this match
     if (_achStats.damageTaken === 0) unlockAchievement('untouchable');
     // Speedrun: won in under 30 seconds
@@ -628,7 +632,7 @@ function endGame() {
     // Super count
     if (_achStats.superCount >= 10) unlockAchievement('super_saver');
     // Hammer-only win
-    if (winner.weaponKey === 'hammer') unlockAchievement('hammer_time');
+    if (achievWinner.weaponKey === 'hammer') unlockAchievement('hammer_time');
     // Boss slayer
     if (isBossModeEnd && gameMode === 'boss') unlockAchievement('boss_slayer');
     if (isBossModeEnd && gameMode === 'trueform') unlockAchievement('true_form');
@@ -638,20 +642,35 @@ function endGame() {
     const isRealPvP = _achStats.pvpDamageDealt >= 40 && _achStats.pvpDamageReceived >= 40;
     if (isRealPvP) {
       if (_achStats.winStreak >= 3) unlockAchievement('hat_trick');
-      if (winner.health <= 10) unlockAchievement('survivor');
+      if (achievWinner.health <= 10) unlockAchievement('survivor');
     }
   } else if (winner && winner.isBoss) {
     _achStats.winStreak = 0; // loss resets streak
   } else {
     _achStats.winStreak = 0;
   }
-  const wt     = document.getElementById('winnerText');
-  if (winner) { wt.textContent = winner.name + ' WINS!'; wt.style.color = winner.color; }
-  else        { wt.textContent = 'DRAW!';                wt.style.color = '#ffffff'; }
+  const wt = document.getElementById('winnerText');
+  if (bossDefeated) {
+    // Human players beat the boss
+    if (gameMode === 'boss' && bossPlayerCount === 2) {
+      wt.textContent = 'PLAYERS WIN!';
+      wt.style.color = '#00ffaa';
+    } else {
+      const humanWinner = alive[0];
+      wt.textContent = (humanWinner ? humanWinner.name : 'PLAYER') + ' WINS!';
+      wt.style.color  = humanWinner ? humanWinner.color : '#ffffff';
+    }
+  } else if (winner) {
+    wt.textContent = winner.name + ' WINS!';
+    wt.style.color = winner.color;
+  } else {
+    wt.textContent = 'DRAW!';
+    wt.style.color = '#ffffff';
+  }
   let statsHtml = players.map(p => `<div class="stat-row" style="color:${p.color}">${p.name}: ${p.kills} KO${p.kills !== 1 ? 's' : ''}</div>`).join('');
   // Boss defeated hint (only if letters not yet unlocked)
   const defeatedBoss = players.find(p => p.isBoss && p.health <= 0);
-  if (defeatedBoss && winner && !winner.isBoss && !unlockedTrueBoss && bossBeaten) {
+  if (defeatedBoss && (winner || bossDefeated) && !(winner && winner.isBoss) && !unlockedTrueBoss && bossBeaten) {
     statsHtml += '<div class="stat-row" style="color:#cc00ee;margin-top:10px;font-size:11px;letter-spacing:1px">' +
                  '&#x2756; Something stirs... seek clues in the arenas.</div>';
   }
@@ -743,6 +762,7 @@ function checkSecretLetterCollect(p) {
 }
 
 function backToMenu() {
+  MusicManager.stop();
   gameRunning  = false;
   paused       = false;
   trainingMode      = false;
@@ -1052,6 +1072,75 @@ function drawBossBeams() {
       ctx.lineTo(b.x, 0);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// CINEMATIC OVERLAY — letterbox bars + vignette (drawn in screen space)
+// ============================================================
+function drawCinematicOverlay() {
+  if (!activeCinematic) return;
+  const cw = canvas.width, ch = canvas.height;
+  const t  = activeCinematic.timer / 60;
+  const totalSec  = activeCinematic.durationFrames / 60;
+  const inAlpha   = Math.min(1, t / 0.3);
+  const outAlpha  = Math.min(1, (totalSec - t) / 0.3);
+  const barAlpha  = Math.min(inAlpha, outAlpha);
+
+  // Letterbox bars
+  const barH = Math.round(ch * 0.082);
+  ctx.globalAlpha = barAlpha;
+  ctx.fillStyle = '#000000';
+  ctx.fillRect(0, 0,         cw, barH);
+  ctx.fillRect(0, ch - barH, cw, barH);
+
+  // Edge vignette
+  ctx.globalAlpha = barAlpha * 0.38;
+  const vg = ctx.createLinearGradient(0, 0, cw, 0);
+  vg.addColorStop(0,    'rgba(0,0,0,0.85)');
+  vg.addColorStop(0.13, 'rgba(0,0,0,0)');
+  vg.addColorStop(0.87, 'rgba(0,0,0,0)');
+  vg.addColorStop(1,    'rgba(0,0,0,0.85)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0, barH, cw, ch - barH * 2);
+
+  // Phase label (if set by the cinematic sequence)
+  const labelAlpha = Math.max(0,
+    Math.min(1, (t - 0.9) / 0.25) * Math.min(1, (totalSec - t - 0.25) / 0.25));
+  if (labelAlpha > 0 && activeCinematic._phaseLabel) {
+    ctx.globalAlpha = labelAlpha;
+    ctx.font        = `bold ${Math.round(ch * 0.042)}px Arial`;
+    ctx.textAlign   = 'center';
+    ctx.fillStyle   = activeCinematic._phaseLabel.color || '#ffffff';
+    ctx.shadowColor = activeCinematic._phaseLabel.color || '#cc00ee';
+    ctx.shadowBlur  = 30;
+    ctx.fillText(activeCinematic._phaseLabel.text, cw / 2, ch / 2);
+    ctx.shadowBlur  = 0;
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// PHASE TRANSITION RINGS
+// ============================================================
+function drawPhaseTransitionRings() {
+  for (let i = phaseTransitionRings.length - 1; i >= 0; i--) {
+    const ring = phaseTransitionRings[i];
+    ring.timer--;
+    if (ring.timer <= 0) { phaseTransitionRings.splice(i, 1); continue; }
+    const prog  = 1 - ring.timer / ring.maxTimer;
+    const curR  = ring.r + prog * (ring.maxR - ring.r);
+    const alpha = ring.timer < 20 ? ring.timer / 20 : 1 - prog * 0.55;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    ctx.strokeStyle = ring.color;
+    ctx.lineWidth   = Math.max(0.5, (ring.lineWidth || 3) * (1 - prog * 0.7));
+    ctx.shadowColor = ring.color;
+    ctx.shadowBlur  = 16;
+    ctx.beginPath();
+    ctx.arc(ring.cx, ring.cy, Math.max(0.1, curR), 0, Math.PI * 2);
+    ctx.stroke();
     ctx.restore();
   }
 }

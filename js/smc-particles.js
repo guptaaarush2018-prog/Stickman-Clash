@@ -9,6 +9,7 @@ function clamp(v, mn, mx){ return Math.max(mn, Math.min(mx, v)); }
 function dist(a, b)      { return Math.hypot(a.cx() - b.cx(), (a.y + a.h/2) - (b.y + b.h/2)); }
 
 function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = false) {
+  if (activeCinematic) return; // no damage during cinematic pauses
   if (!target || target.invincible > 0 || target.health <= 0) return;
   if (target.godmode) return; // godmode: no hitbox — all damage blocked
   let actualDmg = (attacker && attacker.dmgMult !== undefined) ? Math.max(1, Math.round(dmg * attacker.dmgMult)) : dmg;
@@ -32,7 +33,8 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
   if (target && target.charClass === 'kratos') {
     target.rageStacks = Math.min(30, (target.rageStacks || 0) + 1);
   }
-  let actualKb  = kbForce;
+  // KB scales with damage — heavier hits launch targets further
+  let actualKb  = kbForce * (1 + actualDmg * 0.028);
   // Curse: target has curse_fragile — 1.5× KB received
   if (target && target.curses && target.curses.some(c => c.type === 'curse_fragile'))
     actualKb = actualKb * 1.5;
@@ -51,6 +53,10 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
     target.postTeleportCrit = 0; // consume the crit window on first hit
     spawnParticles(target.cx(), target.cy(), '#ffff00', 20);
     spawnParticles(target.cx(), target.cy(), '#00ffff', 12);
+  }
+  // Director intensity: heavier hits raise match intensity slightly.
+  if (typeof directorAddIntensity === 'function') {
+    directorAddIntensity(actualDmg * 0.02);
   }
   if (target.shielding) {
     actualDmg = Math.max(1, Math.floor(dmg * 0.08));
@@ -135,6 +141,9 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
       }
     }
     SoundManager.explosion();
+    if (typeof directorAddIntensity === 'function') {
+      directorAddIntensity(0.12);
+    }
   }
   if (!target.shielding) {
     spawnParticles(target.cx(), target.cy(), target.color, 12);
@@ -158,7 +167,7 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
   }
   // Super charges for the attacker; gun charges faster via superRateBonus
   // Super move itself doesn't charge the next super (prevents instant refill)
-  if (!attacker.superActive) {
+  if (attacker && !attacker.superActive) {
     const superRate = (attacker.superChargeRate || 1) * (attacker.weapon && attacker.weapon.superRateBonus || 1);
     const prev = attacker.superReady;
     attacker.superMeter = Math.min(100, attacker.superMeter + Math.floor(actualDmg * 0.70 * superRate));
@@ -169,7 +178,7 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
   }
   if (settings.dmgNumbers) damageTexts.push(new DamageText(target.cx(), target.y, actualDmg, target.shielding ? '#88ddff' : '#ffdd00'));
   // Weapon splash — axe (large) and gun (small) deal AoE to nearby targets
-  if (!isSplash && !target.shielding && attacker.weapon && attacker.weapon.splashRange) {
+  if (!isSplash && !target.shielding && attacker && attacker.weapon && attacker.weapon.splashRange) {
     handleSplash(attacker, target, actualDmg);
   }
 }

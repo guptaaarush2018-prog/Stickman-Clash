@@ -144,6 +144,14 @@ let unlockedMegaknight = (localStorage.getItem('smc_megaknight') === '1');
 // ============================================================
 let lightningBolts   = [];    // { x, y, timer, segments } — Thor perk visual lightning
 let backstagePortals = [];    // {x,y,type,phase,timer,radius,maxRadius,codeChars,done}
+let phaseTransitionRings = []; // expanding ring effects on phase change
+// ---- Cinematic System ----
+let activeCinematic      = null;  // active cinematic sequence or null
+let slowMotion           = 1.0;   // physics time scale (1=normal, 0=fully frozen)
+let cinematicCamOverride = false; // when true, camera uses cinematic focus targets
+let cinematicZoomTarget  = 1.0;   // zoom level during cinematic
+let cinematicFocusX      = 450;   // camera focus X during cinematic
+let cinematicFocusY      = 260;   // camera focus Y during cinematic
 let bossDeathScene   = null;  // boss defeat animation state
 let fakeDeath        = { triggered: false, active: false, timer: 0, player: null };
 let bossPlayerCount  = 1;     // 1 or 2 players vs boss

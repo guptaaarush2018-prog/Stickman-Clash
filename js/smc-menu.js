@@ -766,6 +766,7 @@ function _startGameCore() {
   screenShake     = 0;
   frameCount      = 0;
   paused          = false;
+  if (typeof resetDirector === 'function') resetDirector();
 
   // Reset camera zoom
   camZoomCur = 1; camZoomTarget = 1;
@@ -809,7 +810,7 @@ function _startGameCore() {
       boss.attackCooldownMult = 0.28;
       boss.kbBonus           = 2.5;
       boss.kbResist          = 0.25;
-      boss.name              = 'TRUE CREATOR';
+      boss.name              = 'CREATOR';
       boss.color             = '#ff00ee';
     }
     if (bossPlayerCount === 2) {
@@ -927,6 +928,14 @@ function _startGameCore() {
     p1.target = p2; p2.target = p1;
   }
 
+  // Assign bot personalities — each AI fighter gets a random personality
+  const PERSONALITIES = ['aggressive', 'defensive', 'trickster', 'sniper'];
+  for (const p of players) {
+    if (p.isAI && !p.isBoss && !p.isTrueForm && !p.isMinion) {
+      p.personality = randChoice(PERSONALITIES);
+    }
+  }
+
   // Online mode: mark the remote player and reset network state
   if (onlineMode && NetworkManager.connected) {
     const localIdx  = onlineLocalSlot - 1;  // 0 or 1
@@ -968,6 +977,12 @@ function _startGameCore() {
   _achStats.damageTaken = 0; _achStats.rangedDmg = 0; _achStats.consecutiveHits = 0;
   _achStats.superCount = 0; _achStats.matchStartTime = Date.now();
   gameRunning = true;
+  // Start appropriate background music
+  if (gameMode === 'boss' || gameMode === 'trueform') {
+    MusicManager.playBoss();
+  } else {
+    MusicManager.playNormal();
+  }
   resizeGame();
   requestAnimationFrame(gameLoop);
 }

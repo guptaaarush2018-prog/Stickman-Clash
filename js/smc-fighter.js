@@ -30,6 +30,7 @@ class Fighter {
     this.state       = 'idle';
     this.attackTimer = 0;
     this.attackDuration = 12;
+    this.attackEndlag = 0;    // recovery frames after swing; player can't attack or ability
     this.hurtTimer    = 0;
     this.stunTimer    = 0;   // frames unable to act (stars spin overhead)
     this.ragdollTimer = 0;   // frames of limp physics (flailing limbs)
@@ -78,6 +79,10 @@ class Fighter {
     this.coyoteFrames  = 0;  // frames after walking off a platform where ground jump is still allowed
     this._prevOnGround = false; // previous frame ground state (for coyote time)
     this._stateChangeCd = 0; // frames before AI can switch aiState again (human-like hesitation)
+    this.personality    = null; // 'aggressive'|'defensive'|'trickster'|'sniper' — set when spawned as bot
+    this._pendingAction    = null;  // { action: string, timer: int } — queued decision pending reaction delay
+    this._actionLockFrames = 0;     // frames bot is committed to current action (no re-evaluation)
+    this.inputBuffer       = [];    // queued inputs: 'attack'|'jump'|'ability' (drained once per frame)
     this.spawnX      = x;
     this.spawnY      = y;
     this.name        = '';
@@ -143,7 +148,13 @@ class Fighter {
     if (this.abilityCooldown > 0)  this.abilityCooldown--;
     if (this.abilityCooldown2 > 0) this.abilityCooldown2--;
     if (this.invincible > 0)      this.invincible--;
+    const _prevAtkTimer = this.attackTimer;
     if (this.attackTimer > 0)     this.attackTimer--;
+    // Trigger endlag when swing animation completes (attackTimer just hit 0)
+    if (_prevAtkTimer === 1 && this.attackTimer === 0 && !this.isBoss) {
+      this.attackEndlag = this.weapon.endlag || 0;
+    }
+    if (this.attackEndlag > 0) { this.attackEndlag--; this.vx *= 0.72; } // slow during recovery
     if (this.hurtTimer > 0)       this.hurtTimer--;
     if (this.stunTimer > 0)       this.stunTimer--;
     if (this.ragdollTimer > 0)    this.ragdollTimer--;
@@ -256,15 +267,16 @@ class Fighter {
     }
 
     // AI: only update every AI_TICK_INTERVAL frames (smoother movement, less CPU)
-    if (this.isAI && this.target && aiTick % AI_TICK_INTERVAL === 0) this.updateAI();
+    if (this.isAI && this.target && !activeCinematic && aiTick % AI_TICK_INTERVAL === 0) this.updateAI();
 
       // ── Standard game physics ──
       const _chaosMoon = gameMode === 'minigames' && currentChaosModifiers.has('moon');
       const arenaGravity = _chaosMoon ? 0.18 : (currentArena.isLowGravity ? 0.28 : (currentArena.isHeavyGravity ? 0.95 : 0.65));
       const gravDir = (gameMode === 'trueform' && tfGravityInverted && !this.isBoss) ? -1 : 1;
-      this.vy += arenaGravity * gravDir;
-      this.x  += this.vx;
-      this.y  += this.vy;
+      const _sm = slowMotion; // cinematic slow-motion time scale
+      this.vy += arenaGravity * gravDir * _sm;
+      this.x  += this.vx * _sm;
+      this.y  += this.vy * _sm;
       const _chaosSlip = gameMode === 'minigames' && currentChaosModifiers.has('slippery');
       const friction = (this.onGround && (currentArena.isIcy || _chaosSlip)) ? 0.975 : (this.onGround ? 0.78 : 0.94);
       this.vx *= friction;
@@ -594,11 +606,13 @@ class Fighter {
     if (this.backstageHiding) return;
     if (this.state === 'dead' || this.state === 'stunned' || this.state === 'ragdoll') return;
     if (this.cooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+    if (!this.isBoss && this.attackEndlag > 0) return; // enforced swing recovery window
 
     // MEGAKNIGHT: Gauntlet Smash — AoE slam in front, launches enemies outward
     if (this.charClass === 'megaknight') {
       this.cooldown     = this.weapon.cooldown;
       this.attackTimer  = this.attackDuration;
+      this.superChargeRate = 2;
       this.weaponHit    = false;
       SoundManager.heavyHit && SoundManager.heavyHit();
       const _allF = [...players, ...minions, ...trainingDummies];
@@ -651,6 +665,7 @@ class Fighter {
     if (this.backstageHiding) return;
     if (this.state === 'dead' || this.state === 'stunned' || this.state === 'ragdoll') return;
     if (this.abilityCooldown > 0 || this.health <= 0 || this.stunTimer > 0 || this.ragdollTimer > 0) return;
+    if (!this.isBoss && this.attackEndlag > 0) return; // can't ability during swing recovery
     // MEGAKNIGHT class override: Q = Uppercut — launch nearby enemies skyward
     if (this.charClass === 'megaknight') {
       this.abilityCooldown  = 75;
@@ -672,7 +687,8 @@ class Fighter {
       screenShake = Math.max(screenShake, hitCount > 0 ? 14 : 6);
       return;
     }
-    const _safeTarget = target || this.target || trainingDummies[0] || players.find(p => p !== this);
+    const _safeTarget = target || this.target || trainingDummies[0] || players.find(p => p !== this && p.health > 0);
+    if (!_safeTarget) return; // no valid target — don't fire ability (avoids null crash in weapon ability functions)
     this.weapon.ability(this, _safeTarget);
     this.abilityCooldown = this.weapon.abilityCooldown;
     this.attackTimer     = this.attackDuration * 2;
@@ -695,12 +711,14 @@ class Fighter {
       this.canDoubleJump   = true;
       this.superMeter      = 0;
       this.superReady      = false;
+      this.superActive     = true; // block super meter charging from landing shockwave
       this.invincible      = Math.max(this.invincible, 120);
       screenShake = Math.max(screenShake, 20);
       spawnParticles(this.cx(), this.y + this.h, '#8844ff', 32);
       spawnParticles(this.cx(), this.y + this.h, '#cc88ff', 18);
       spawnParticles(this.cx(), this.y + this.h, '#ffffff', 10);
       SoundManager.explosion && SoundManager.explosion();
+      setTimeout(() => { if (this) this.superActive = false; }, 4000);
       return;
     }
     // Boss heals 5% of max HP (no max HP increase); players gain +20 max HP and heal 20
@@ -713,7 +731,7 @@ class Fighter {
     this.superMeter  = 0;
     this.superReady  = false;
     this.superActive = true; // block super-meter charging during this move
-    setTimeout(() => { this.superActive = false; }, 2000); // clear after 2s
+    setTimeout(() => { if (this) this.superActive = false; }, 4000); // clear after 4s (covers full attackTimer*3 window)
     screenShake      = Math.max(screenShake, 24);
     SoundManager.superActivate();
     if (!this.isAI && !this.isBoss) { _achStats.superCount++; if (_achStats.superCount >= 10) unlockAchievement('super_saver'); }
@@ -817,7 +835,7 @@ class Fighter {
     const d        = t ? Math.abs(t.cx() - this.cx()) : Infinity;
     const dNorm    = Math.min(d / 500, 1);           // 0 = at target, 1 = far away
     const tHpPct   = t ? t.health / t.maxHealth : 1;
-    const inRange  = t ? d < this.weapon.range + 25 : false;
+
 
     // Difficulty: easy = cautious, hard = aggressive
     const hazardW  = this.aiDiff === 'easy' ? 1.55 : this.aiDiff === 'medium' ? 1.00 : 0.58;
@@ -825,8 +843,11 @@ class Fighter {
 
     const s = {};
 
+    // Fix 5: clamp danger so heatmap influences movement but never fully disables attacks
+    const clampedHeat = Math.min(selfHeat, 0.50);
+
     // AVOID_HAZARD: proportional to heatmap value at self + low-HP fear bonus
-    s.avoid_hazard = selfHeat * hazardW * (1 + (1 - hpPct) * 0.45);
+    s.avoid_hazard = clampedHeat * hazardW * (1 + (1 - hpPct) * 0.45);
 
     // RECOVER: high when falling off-screen (vy > 2, y past 60% of GAME_H)
     s.recover = (!this.onGround && this.vy > 2 && this.y > GAME_H * 0.60) ? 0.96 : 0;
@@ -836,20 +857,23 @@ class Fighter {
       ? (1 - hpPct) * 0.90 * hazardW * (1 - dNorm * 0.35)
       : 0;
 
-    // ATTACK: in range, weapon ready, scales with aggression and target vulnerability
-    s.attack = (inRange && this.cooldown === 0)
+    // Fix 2: use <= 0 instead of === 0 for cooldown checks
+    // Fix 4: widen attack detection to 90% of weapon reach beyond base range
+    const attackRange = this.weapon.range * 0.9 + 25;
+    const inRangeExt  = t ? d < attackRange : false;
+    s.attack = (inRangeExt && this.cooldown <= 0)
       ? (0.60 + (1 - dNorm) * 0.22 + (1 - tHpPct) * 0.12) * aggrW
       : 0;
 
-    // USE_ABILITY: available + close enough
-    s.use_ability = (this.abilityCooldown === 0 && d < 280)
+    // USE_ABILITY: available + close enough (fix 2: <= 0)
+    s.use_ability = (this.abilityCooldown <= 0 && d < 280)
       ? (0.68 + (1 - tHpPct) * 0.14) * aggrW
       : 0;
 
     // USE_SUPER: very high priority when ready and self not in severe danger
-    s.use_super = (this.superReady && selfHeat < 0.60) ? 0.90 * aggrW : 0;
+    s.use_super = (this.superReady && clampedHeat < 0.50) ? 0.90 * aggrW : 0;
 
-    // CHASE: baseline — close the gap
+    // CHASE: baseline — close the gap (always has a positive score so bot never idles)
     s.chase = (0.38 + dNorm * 0.20) * aggrW;
 
     // ---- TACTICAL POSITIONING MODIFIERS ----
@@ -895,6 +919,62 @@ class Fighter {
       }
     }
 
+    // ---- PERSONALITY MODIFIERS ----
+    // Applied after all base scoring so they additively shift the action distribution.
+    if (this.personality) {
+      switch (this.personality) {
+        case 'aggressive':
+          // Relentlessly press attacks — ignore self-preservation when healthy
+          s.attack       = Math.min(1.8, (s.attack || 0)       * 1.55);
+          s.chase        = Math.min(1.5, (s.chase  || 0)       * 1.40);
+          s.use_ability  = Math.min(1.6, (s.use_ability || 0)  * 1.35);
+          s.retreat      = Math.max(0,   (s.retreat || 0)      * 0.30);
+          s.avoid_hazard = Math.max(0,   (s.avoid_hazard || 0) * 0.55);
+          break;
+
+        case 'defensive':
+          // Back off when hurt; fight mainly when enemy comes to them
+          s.retreat      = Math.min(1.4, (s.retreat      || 0) * 1.60);
+          s.avoid_hazard = Math.min(1.4, (s.avoid_hazard || 0) * 1.45);
+          s.reposition   = Math.min(1.2, (s.reposition   || 0) + 0.18);
+          s.attack       = Math.max(0,   (s.attack || 0)       * 0.65);
+          s.chase        = Math.max(0,   (s.chase  || 0)       * 0.55);
+          // Counter-punch: spike attack score when enemy swings at us
+          if (t && t.attackTimer > 0 && Math.abs(t.cx() - this.cx()) < 120) {
+            s.attack = Math.min(1.5, (s.attack || 0) + 0.55);
+          }
+          break;
+
+        case 'trickster':
+          // Chaotic — frequently uses abilities/supers, moves unpredictably
+          s.use_ability = Math.min(1.8, (s.use_ability || 0) * 1.70);
+          s.use_super   = Math.min(1.6, (s.use_super   || 0) * 1.45);
+          s.chase       = Math.min(1.3, (s.chase       || 0) * 1.20);
+          // Random noise: shifts scoring each frame for erratic feel
+          s.attack      = Math.max(0, (s.attack || 0) + (Math.random() - 0.5) * 0.35);
+          s.retreat     = Math.max(0, (s.retreat || 0) + (Math.random() - 0.5) * 0.25);
+          break;
+
+        case 'sniper':
+          // Stays at range; high attack priority only with ranged weapon
+          if (this.weapon?.type === 'ranged') {
+            s.attack      = Math.min(1.8, (s.attack || 0) * 1.80);
+            s.use_ability = Math.min(1.6, (s.use_ability || 0) * 1.50);
+            // Prefer keeping distance — boost reposition when enemy gets close
+            if (d < 200) {
+              s.retreat    = Math.min(1.4, (s.retreat    || 0) + 0.55);
+              s.reposition = Math.min(1.2, (s.reposition || 0) + 0.35);
+              s.attack     = Math.max(0,   (s.attack     || 0) * 0.60);
+            }
+          } else {
+            // Melee sniper: still tries to keep optimal range, attacks only when lined up
+            s.chase       = Math.max(0,   (s.chase  || 0) * 0.70);
+            s.reposition  = Math.min(1.2, (s.reposition || 0) + 0.22);
+          }
+          break;
+      }
+    }
+
     return s;
   }
 
@@ -908,23 +988,51 @@ class Fighter {
     updateHeatmap();
 
     const scores = this.computeUtility(t);
-    // Pick the action with the highest score
-    const best = Object.keys(scores).reduce((a, b) => scores[a] >= scores[b] ? a : b);
 
-    // Throttle state changes — bot "thinks" before switching (≤1 change per 18 frames)
+    // Fix 1: fallback — if every score is zero or below, default to 'chase' so bot never idles
+    const maxScore = Math.max(...Object.values(scores));
+    const best = maxScore <= 0
+      ? 'chase'
+      : Object.keys(scores).reduce((a, b) => scores[a] >= scores[b] ? a : b);
+
+    // Reaction delay system: bot queues decisions and commits after a human-like delay
+    const reactFrames  = this.aiDiff === 'easy' ? 15 : this.aiDiff === 'medium' ? 11 : 7;
+    const lockFrames   = this.aiDiff === 'easy' ? 24 : this.aiDiff === 'medium' ? 18 : 12;
+
     if (this._stateChangeCd > 0) this._stateChangeCd--;
-    if (best !== this.aiState && this._stateChangeCd === 0) {
-      this.aiState = best;
-      this._stateChangeCd = 18;
+    if (this._actionLockFrames > 0) this._actionLockFrames--;
+
+    // Tick pending action countdown; commit when it expires
+    if (this._pendingAction) {
+      this._pendingAction.timer--;
+      if (this._pendingAction.timer <= 0) {
+        this.aiState = this._pendingAction.action;
+        this._pendingAction = null;
+        this._stateChangeCd = 18;
+        this._actionLockFrames = lockFrames;
+      }
+    } else if (best !== this.aiState && this._stateChangeCd === 0 && this._actionLockFrames === 0) {
+      // Queue the new decision — bot will execute it after reaction delay
+      this._pendingAction = { action: best, timer: reactFrames };
+    }
+
+    // Fix 6: debug state display — show current AI state as a small label above bot
+    if (this.isAI && !this.isBoss && settings.dmgNumbers) {
+      this._debugState = best; // drawn by Fighter.draw() if present
     }
 
     const dx         = t ? t.cx() - this.cx() : 0;
     const dir        = dx > 0 ? 1 : -1;
     const d          = Math.abs(dx);
-    const spd        = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
-    const atkFreq    = this.aiDiff === 'easy' ? 0.04 : this.aiDiff === 'medium' ? 0.16 : 0.28;
-    const abiFreq    = this.aiDiff === 'easy' ? 0.004 : this.aiDiff === 'medium' ? 0.022 : 0.04;
-    const missChance = this.aiDiff === 'easy' ? 0.15 : this.aiDiff === 'medium' ? 0.08 : 0.03;
+    let   spd        = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+    let   atkFreq    = this.aiDiff === 'easy' ? 0.04 : this.aiDiff === 'medium' ? 0.16 : 0.28;
+    let   abiFreq    = this.aiDiff === 'easy' ? 0.004 : this.aiDiff === 'medium' ? 0.022 : 0.04;
+    let   missChance = this.aiDiff === 'easy' ? 0.15 : this.aiDiff === 'medium' ? 0.08 : 0.03;
+    // Personality execution tweaks
+    if (this.personality === 'aggressive') { spd *= 1.20; atkFreq *= 1.45; missChance *= 0.60; }
+    if (this.personality === 'defensive')  { spd *= 0.85; atkFreq *= 0.65; }
+    if (this.personality === 'trickster')  { abiFreq *= 2.0; missChance *= 0.50; }
+    if (this.personality === 'sniper' && this.weapon?.type === 'ranged') { spd *= 1.10; atkFreq *= 1.55; }
 
     // Raycast: check heat and cliff directly ahead
     const fwd      = this.raycastForward(dir);
@@ -966,7 +1074,7 @@ class Fighter {
           this.vx = retDir * spd;
         } else {
           // Cornered — fight back rather than stepping off edge
-          if (this.cooldown === 0 && Math.random() < atkFreq) this.attack(t);
+          if (this.cooldown <= 0 && Math.random() < atkFreq) this.attack(t);
           this.vx = 0;
         }
         if (this.onGround && !retEdge && Math.random() < 0.04) this.vy = -16;
@@ -1007,8 +1115,9 @@ class Fighter {
         this.vx *= 0.72;
         // Occasional missed swing (human-like imperfection)
         if (Math.random() < missChance) this.facing = -this.facing;
-        if (this.cooldown === 0 && Math.random() < atkFreq) this.attack(t);
-        if (this.abilityCooldown === 0 && Math.random() < abiFreq) this.ability(t);
+        // Fix 2: use <= 0 for cooldown checks
+        if (this.cooldown <= 0 && Math.random() < atkFreq) this.attack(t);
+        if (this.abilityCooldown <= 0 && Math.random() < abiFreq) this.ability(t);
         if (this.superReady && Math.random() < 0.12) this.useSuper(t);
         // Small hop to reach target on a slightly higher level
         if (this.onGround && t && t.y + t.h < this.y - 30 && !fwd.cliff && Math.random() < 0.02)
@@ -1046,8 +1155,30 @@ class Fighter {
         // Jump toward airborne target (not if near screen edge)
         if (this.onGround && t && !t.onGround && Math.random() < 0.05 && !fwd.cliff && !towardEdge)
           this.vy = -18;
+        // Trickster: random erratic jumps and direction fakes
+        if (this.personality === 'trickster' && this.onGround && !towardEdge) {
+          if (Math.random() < 0.025) { this.vy = -18; }                        // random jump
+          if (Math.random() < 0.012) { this.vx = -this.vx; this.facing *= -1; } // fake-out reverse
+        }
         break;
     }
+
+    // Input buffer: queue an attack when opponent steps into range (executes on drain, not immediately)
+    if (t && t.health > 0 && this.aiState !== 'retreat' && this.aiState !== 'recover') {
+      const bufferRange = this.weapon.range * 0.9 + 20;
+      if (d < bufferRange && this.inputBuffer.length === 0) {
+        this.inputBuffer.push('attack');
+      }
+    }
+    // Drain input buffer — process one queued input per frame when ready
+    if (this.inputBuffer.length > 0 && this._actionLockFrames === 0 && !this._pendingAction) {
+      const qi = this.inputBuffer.shift();
+      if      (qi === 'attack'  && this.cooldown <= 0 && t && t.health > 0) this.attack(t);
+      else if (qi === 'jump'    && this.onGround) this.vy = -18;
+      else if (qi === 'ability' && this.abilityCooldown <= 0) this.ability(t);
+    }
+    // Cap buffer to prevent stale queues
+    if (this.inputBuffer.length > 3) this.inputBuffer.length = 3;
 
     // --- Shield reaction (medium+): block incoming melee swing ---
     if (t && this.aiDiff !== 'easy' && t.attackTimer > 0 && d < 110 &&
@@ -1069,10 +1200,9 @@ class Fighter {
       }
     }
 
-    // --- Reaction lag: human-like pause between decisions ---
-    if (this.aiDiff === 'easy'   && Math.random() < 0.10) this.aiReact = 5  + Math.floor(Math.random() * 4);
-    if (this.aiDiff === 'medium' && Math.random() < 0.04) this.aiReact = 3  + Math.floor(Math.random() * 5);
-    if (this.aiDiff === 'hard'   && Math.random() < 0.02) this.aiReact = 2  + Math.floor(Math.random() * 3);
+    // Reaction lag now handled by _pendingAction system (see above).
+    // Rare stun pause for easy bots only (simulates brief confusion)
+    if (this.aiDiff === 'easy' && Math.random() < 0.04) this.aiReact = 3 + Math.floor(Math.random() * 4);
   }
 
   // Returns true if moving in 'dir' (±1) would walk the AI off a platform
@@ -1518,6 +1648,12 @@ class Fighter {
     ctx.shadowBlur   = 4;
     ctx.fillText(this.name, cx, ty - 5);
     ctx.shadowBlur   = 0;
+    // Fix 6: debug state label — shown only when dmgNumbers is on (dev toggle)
+    if (this._debugState && settings.dmgNumbers) {
+      ctx.font      = 'bold 8px monospace';
+      ctx.fillStyle = '#ffee55';
+      ctx.fillText(this._debugState, cx, ty - 16);
+    }
 
     // Per-limb ragdoll debug overlay
     if (this._rd) PlayerRagdoll.debugDraw(this, cx, shoulderY, hipY);

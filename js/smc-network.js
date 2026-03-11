@@ -1,16 +1,35 @@
 'use strict';
 
 // ============================================================
-// NETWORK MANAGER — WebSocket multiplayer via Socket.IO
+// NETWORK MANAGER — WebRTC peer-to-peer via PeerJS
+// Works on any network / device with no backend server required.
+//
+// HOW IT WORKS:
+//   The first player to enter a room code becomes HOST (P1).
+//   They register a named PeerJS ID: "smcgame-<ROOMCODE>".
+//   The second player connects to that same ID as GUEST (P2).
+//   All game data flows over a direct WebRTC DataChannel.
+//
+// The public API is identical to the old Socket.IO version so
+// smc-loop.js and smc-menu.js need no changes.
 // ============================================================
 const NetworkManager = (function() {
-  let _socket = null;
-  let _slot   = 0;     // 1 = this client controls p1; 2 = this client controls p2
-  let _room   = null;
+  let _peer      = null;  // local Peer instance
+  let _conn      = null;  // active DataConnection
+  let _slot      = 0;     // 1 = host/P1, 2 = guest/P2
+  let _room      = null;
   let _connected = false;
   let _sendTimer = 0;
+
+  // Callbacks stored at connect() time
+  let _onJoined        = null;
+  let _onBothConnected = null;
+  let _onRemoteHit     = null;
+  let _onRemoteEvent   = null;
+  let _onDisconnect    = null;
+
   // Interpolation buffer for remote player state
-  const _buf = [];  // [ {ts, x, y, vx, vy, health, maxHealth, state, facing, color, weaponKey, charClass, lives, hat, cape, curses} ]
+  const _buf = [];
   const MAX_BUF = 12;
 
   function _pushBuf(state) {
@@ -21,113 +40,172 @@ const NetworkManager = (function() {
 
   function _lerp(a, b, t) { return a + (b - a) * t; }
 
-  return {
-    get connected()   { return _connected; },
-    get slot()        { return _slot; },
-    get room()        { return _room; },
-    get socket()      { return _socket; },
+  // Wire up an open DataConnection for both host and guest
+  function _setupConn(conn) {
+    _conn = conn;
 
-    connect(serverUrl, roomCode, onJoined, onBothConnected, onRemoteState, onRemoteHit, onRemoteEvent, onDisconnect) {
-      if (_socket) { _socket.disconnect(); _socket = null; }
+    conn.on('data', (msg) => {
+      if (!msg || !msg.type) return;
+      switch (msg.type) {
+        case 'slotAssign':
+          // Guest receives their slot assignment from host
+          _slot = msg.slot;
+          _connected = true;
+          if (_onJoined) _onJoined(_slot);
+          break;
+        case 'bothConnected':
+          if (_onBothConnected) _onBothConnected();
+          break;
+        case 'playerState':
+          _pushBuf(msg.state);
+          break;
+        case 'hitEvent':
+          if (_onRemoteHit) _onRemoteHit(msg);
+          break;
+        case 'gameEvent':
+          if (_onRemoteEvent) _onRemoteEvent(msg);
+          break;
+        case 'ping':
+          conn.send({ type: 'pong', ts: msg.ts });
+          break;
+      }
+    });
+
+    conn.on('close', () => {
       _connected = false;
-      _slot = 0; _room = null;
-      /* global io */
-      if (typeof io === 'undefined') {
-        console.error('Socket.IO not loaded');
+      if (_onDisconnect) _onDisconnect();
+    });
+
+    conn.on('error', () => {
+      _connected = false;
+      if (_onDisconnect) _onDisconnect();
+    });
+  }
+
+  function _statusEl() { return document.getElementById('onlineStatus'); }
+
+  return {
+    get connected() { return _connected; },
+    get slot()      { return _slot; },
+    get room()      { return _room; },
+
+    // serverUrl param kept for API compatibility — ignored (PeerJS uses its own cloud)
+    connect(serverUrl, roomCode, onJoined, onBothConnected, onRemoteState, onRemoteHit, onRemoteEvent, onDisconnect) {
+      if (_peer) { _peer.destroy(); _peer = null; }
+      _conn = null; _connected = false; _slot = 0; _room = null; _buf.length = 0;
+
+      _onJoined        = onJoined;
+      _onBothConnected = onBothConnected;
+      _onRemoteHit     = onRemoteHit;
+      _onRemoteEvent   = onRemoteEvent;
+      _onDisconnect    = onDisconnect;
+
+      const code   = roomCode.trim().toLowerCase();
+      _room        = code.toUpperCase();
+      const hostId = 'smcgame-' + code; // deterministic ID for the host
+
+      /* global Peer */
+      if (typeof Peer === 'undefined') {
+        const el = _statusEl();
+        if (el) el.textContent = '❌ PeerJS not loaded — check your internet connection.';
         return;
       }
-      _socket = io(serverUrl, { transports: ['websocket'], reconnectionAttempts: 3 });
 
-      _socket.on('connect', () => {
-        _socket.emit('joinRoom', roomCode.trim().toLowerCase());
-      });
+      // Attempt to register as HOST by claiming the named peer ID
+      _peer = new Peer(hostId, { debug: 0 });
 
-      _socket.on('joined', (data) => {
-        _slot = data.slot;
-        _room = data.roomCode;
+      _peer.on('open', () => {
+        // Successfully registered as host — we are P1
+        _slot = 1;
         _connected = true;
-        if (onJoined) onJoined(data.slot);
+        if (onJoined) onJoined(1);
+        const el = _statusEl();
+        if (el) el.textContent = '✅ Room created — waiting for opponent…';
       });
 
-      _socket.on('bothConnected', () => {
-        if (onBothConnected) onBothConnected();
+      _peer.on('connection', (conn) => {
+        // Guest connected to us
+        _setupConn(conn);
+        conn.on('open', () => {
+          // Tell guest their slot, then signal both-connected
+          conn.send({ type: 'slotAssign', slot: 2 });
+          setTimeout(() => {
+            conn.send({ type: 'bothConnected' });
+            if (onBothConnected) onBothConnected();
+          }, 400); // brief delay so guest processes slotAssign first
+        });
       });
 
-      _socket.on('remoteState', (state) => {
-        _pushBuf(state);
-        if (onRemoteState) onRemoteState(state);
+      _peer.on('error', (err) => {
+        if (err.type === 'unavailable-id') {
+          // Room already exists — join as GUEST (P2)
+          _peer.destroy();
+          _peer = new Peer({ debug: 0 }); // auto-generated guest ID
+
+          _peer.on('open', () => {
+            const el = _statusEl();
+            if (el) el.textContent = '⏳ Connecting to host…';
+            const conn = _peer.connect(hostId, { reliable: true });
+            _setupConn(conn);
+          });
+
+          _peer.on('error', (e2) => {
+            _connected = false;
+            const el = _statusEl();
+            if (el) el.textContent = `❌ Connection failed: ${e2.message || e2.type}`;
+          });
+
+        } else {
+          _connected = false;
+          const el = _statusEl();
+          if (el) el.textContent = `❌ Error: ${err.message || err.type}`;
+        }
       });
 
-      _socket.on('remoteHit', (ev) => {
-        if (onRemoteHit) onRemoteHit(ev);
-      });
-
-      _socket.on('remoteGameEvent', (ev) => {
-        if (onRemoteEvent) onRemoteEvent(ev);
-      });
-
-      _socket.on('opponentDisconnected', () => {
+      _peer.on('disconnected', () => {
         _connected = false;
-        if (onDisconnect) onDisconnect();
-      });
-
-      _socket.on('roomFull', () => {
-        _connected = false;
-        const el = document.getElementById('onlineStatus');
-        if (el) el.textContent = '❌ Room is full — try a different code.';
-      });
-
-      _socket.on('connect_error', (err) => {
-        _connected = false;
-        const el = document.getElementById('onlineStatus');
-        if (el) el.textContent = `❌ Cannot connect: ${err.message}`;
-      });
-
-      _socket.on('disconnect', () => {
-        _connected = false;
-        if (onDisconnect) onDisconnect();
+        if (_onDisconnect) _onDisconnect();
       });
     },
 
     disconnect() {
-      if (_socket) { _socket.disconnect(); _socket = null; }
-      _connected = false; _slot = 0; _room = null;
-      _buf.length = 0;
+      if (_peer) { _peer.destroy(); _peer = null; }
+      _conn = null; _connected = false; _slot = 0; _room = null; _buf.length = 0;
     },
 
-    // Send local player state to server (call at ~20Hz)
+    // Send local player state (~20 Hz via tick())
     sendState(p) {
-      if (!_socket || !_connected || !p) return;
-      _socket.emit('playerState', {
-        x: p.x, y: p.y, vx: p.vx, vy: p.vy,
-        health: p.health, maxHealth: p.maxHealth,
-        state: p.state, facing: p.facing,
-        color: p.color, weaponKey: p.weaponKey,
-        charClass: p.charClass || 'none',
-        lives: p.lives,
-        hat: p.hat || 'none', cape: p.cape || 'none',
-        name: p.name || (_slot === 1 ? 'P1' : 'P2'),
-        curses: (p.curses || []).map(c => ({ type: c.type, timer: c.timer })),
-      });
+      if (!_conn || !_connected || !p) return;
+      try {
+        _conn.send({ type: 'playerState', state: {
+          x: p.x, y: p.y, vx: p.vx, vy: p.vy,
+          health: p.health, maxHealth: p.maxHealth,
+          state: p.state, facing: p.facing,
+          color: p.color, weaponKey: p.weaponKey,
+          charClass: p.charClass || 'none',
+          lives: p.lives,
+          hat: p.hat || 'none', cape: p.cape || 'none',
+          name: p.name || (_slot === 1 ? 'P1' : 'P2'),
+          curses: (p.curses || []).map(c => ({ type: c.type, timer: c.timer })),
+        }});
+      } catch(e) {}
     },
 
-    // Send a hit event (damage dealt by local player to remote)
     sendHit(dmg, kb, kbDir) {
-      if (!_socket || !_connected) return;
-      _socket.emit('hitEvent', { dmg, kb, kbDir, ts: Date.now() });
+      if (!_conn || !_connected) return;
+      try { _conn.send({ type: 'hitEvent', dmg, kb, kbDir, ts: Date.now() }); } catch(e) {}
     },
 
-    // Send a generic game event
     sendGameEvent(type, data) {
-      if (!_socket || !_connected) return;
-      _socket.emit('gameEvent', { type, data, ts: Date.now() });
+      if (!_conn || !_connected) return;
+      try { _conn.send({ type: 'gameEvent', type: type, data, ts: Date.now() }); } catch(e) {}
     },
 
-    // Get the interpolated state of the remote player (call each render frame)
+    // Interpolated remote state — called each render frame
     getRemoteState() {
       if (_buf.length === 0) return null;
       if (_buf.length === 1) return _buf[0];
-      const now = Date.now() - 130; // 130ms interpolation delay (prevents teleporting)
+      const now = Date.now() - 130;
       let lo = _buf[0], hi = _buf[_buf.length - 1];
       for (let i = 0; i < _buf.length - 1; i++) {
         if (_buf[i].ts <= now && _buf[i + 1].ts >= now) {
@@ -151,13 +229,10 @@ const NetworkManager = (function() {
       };
     },
 
-    // Called every game frame — sends state at 20Hz (every 3 frames at 60fps)
+    // Called every game frame — sends state at 20 Hz
     tick(localPlayer) {
       _sendTimer++;
-      if (_sendTimer >= 3) {
-        _sendTimer = 0;
-        this.sendState(localPlayer);
-      }
+      if (_sendTimer >= 3) { _sendTimer = 0; this.sendState(localPlayer); }
     },
   };
 })();
@@ -166,26 +241,23 @@ const NetworkManager = (function() {
 // ONLINE MULTIPLAYER — connection + mode setup
 // ============================================================
 function networkJoinRoom() {
-  const serverUrl  = (document.getElementById('onlineServerUrl')?.value || 'http://localhost:3001').trim();
-  const roomCode   = (document.getElementById('onlineRoomCode')?.value || '').trim().toUpperCase();
-  const statusEl   = document.getElementById('onlineStatus');
+  const roomCode = (document.getElementById('onlineRoomCode')?.value || '').trim().toUpperCase();
+  const statusEl = document.getElementById('onlineStatus');
   if (!roomCode) { if (statusEl) statusEl.textContent = '⚠ Enter a room code first.'; return; }
   if (statusEl) statusEl.textContent = '⏳ Connecting…';
 
   NetworkManager.connect(
-    serverUrl,
+    null, // serverUrl — unused, kept for API compat
     roomCode,
     // onJoined
     (slot) => {
       onlineLocalSlot = slot;
       onlineMode = true;
       if (statusEl) statusEl.textContent = slot === 1
-        ? `✅ Joined as P1 — waiting for opponent…`
-        : `✅ Joined as P2 — waiting for host…`;
-      // Show game-mode selector only to host
+        ? `✅ Room "${roomCode}" created — share this code with your opponent!`
+        : `✅ Joined room "${roomCode}" — connecting to host…`;
       const modeRow = document.getElementById('onlineGameModeRow');
       if (modeRow) modeRow.style.display = slot === 1 ? 'flex' : 'none';
-      // Show chat immediately for both players
       const chatEl = document.getElementById('onlineChat');
       if (chatEl) chatEl.style.display = 'flex';
     },
@@ -193,7 +265,6 @@ function networkJoinRoom() {
     () => {
       if (statusEl) statusEl.textContent = '🎮 Both connected! Starting…';
       onlineReady = true;
-      // Guest adopts whatever mode the host selected
       if (onlineLocalSlot !== 1) {
         gameMode = _onlineGameMode;
         selectMode(gameMode);
@@ -205,7 +276,6 @@ function networkJoinRoom() {
     // onRemoteHit
     (ev) => {
       if (!gameRunning || !onlineMode) return;
-      // Attacker hit us — apply damage to our local fighter
       const me = players.find(p => !p.isRemote);
       if (me && me.health > 0) {
         me.health    = Math.max(0, me.health - (ev.dmg || 0));
@@ -221,17 +291,14 @@ function networkJoinRoom() {
     // onRemoteGameEvent
     (ev) => {
       if (!onlineMode) return;
-      // Achievement sync — runs even in menu
       if (ev.type === 'achievementUnlocked') {
         if (ev.data?.id && !earnedAchievements.has(ev.data.id)) unlockAchievement(ev.data.id);
         return;
       }
-      // Chat message — runs even outside game
       if (ev.type === 'chat') {
         _appendChatMsg(ev.data?.name || 'P2', ev.data?.text || '');
         return;
       }
-      // Host broadcasts chosen game mode before start
       if (ev.type === 'gameModeSelected') {
         _onlineGameMode = ev.data?.mode || '2p';
         gameMode = _onlineGameMode;
@@ -253,8 +320,8 @@ function networkJoinRoom() {
         endGame();
         showToast('Opponent disconnected', 3000);
       } else {
-        const statusEl = document.getElementById('onlineStatus');
-        if (statusEl) statusEl.textContent = '🔌 Disconnected from server.';
+        const el = document.getElementById('onlineStatus');
+        if (el) el.textContent = '🔌 Disconnected.';
       }
     },
   );
@@ -264,11 +331,9 @@ function setOnlineGameMode(mode) {
   _onlineGameMode = mode;
   gameMode = mode;
   selectMode(mode);
-  // Update button active states
   document.querySelectorAll('#onlineGameModeRow .btn').forEach(b => {
     b.classList.toggle('active', b.dataset.mode === mode);
   });
-  // Broadcast to guest if connected
   if (NetworkManager.connected) {
     NetworkManager.sendGameEvent('gameModeSelected', { mode });
   }

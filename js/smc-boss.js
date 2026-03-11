@@ -26,18 +26,20 @@ class Boss extends Fighter {
     // Gauntlet weapon (single weapon only)
     this.weaponKey      = 'gauntlet';
     this.weapon         = WEAPONS['gauntlet'];
+    // NOTE: all cooldowns below are in AI TICKS (updateAI runs every 15 frames).
+    // 1 AI tick = 15 frames. To get seconds: ticks × 15 / 60.
     // Minion spawning
-    this.minionCooldown = 600;  // frames until first spawn (~10 s)
+    this.minionCooldown = 20;   // 20 ticks = 300 frames = ~5 s initial
     // Beam attacks
-    this.beamCooldown   = 900;  // frames until first beam (~15 s)
+    this.beamCooldown   = 28;   // 28 ticks = 420 frames = ~7 s initial
     // Teleport
     this.teleportCooldown = 0;
-    this.teleportMaxCd    = 900;
+    this.teleportMaxCd    = 60; // 60 ticks = 900 frames = ~15 s
     this.postTeleportCrit = 0;
     this.forcedTeleportFlash = 0;
     // Spike attacks
-    this.spikeCooldown  = 1200; // 20 seconds initial
-    // Post-special pause (boss stops attacking for 1.5s after specials)
+    this.spikeCooldown  = 24;   // 24 ticks = 360 frames = ~6 s initial
+    // Post-special pause (in AI ticks; 1 tick ≈ 0.25 s)
     this.postSpecialPause = 0;
     // Monologue tracking
     this.phaseDialogueFired = new Set();
@@ -69,11 +71,12 @@ class Boss extends Fighter {
     this.weapon.ability(this, target);
     this.abilityCooldown  = Math.max(1, Math.ceil(this.weapon.abilityCooldown * (this.attackCooldownMult || 0.5)));
     this.attackTimer      = this.attackDuration * 2;
-    this.postSpecialPause = 90; // 1.5s pause after void slam ability
+    this.postSpecialPause = 3; // 3 ticks = 45 frames = 0.75s pause after void slam ability
   }
 
   // Override AI: phase-based, more aggressive, respects shield cooldown
   updateAI() {
+    if (activeCinematic) return; // freeze during cinematic moments
     if (this.aiReact > 0) { this.aiReact--; return; }
     if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
     // Post-special pause: boss moves but doesn't attack for 1.5s after specials
@@ -97,11 +100,13 @@ class Boss extends Fighter {
       this._lastPhase = phase;
       if (settings.screenShake) screenShake = Math.max(screenShake, 20);
       if (settings.phaseFlash)  bossPhaseFlash = 50;
+      this.postSpecialPause = Math.max(this.postSpecialPause, 8); // 8 ticks = 120 frames = 2s cinematic pause
+      triggerPhaseTransition(this, phase);
     }
-    // Phase-based stats
-    const spd     = phase === 3 ? 5.5 : phase === 2 ? 4.5 : 3.8;
-    const atkFreq = phase === 3 ? 0.40 : phase === 2 ? 0.20 : 0.13;
-    const abiFreq = phase === 3 ? 0.07 : phase === 2 ? 0.035 : 0.018;
+    // Phase-based stats — hyper aggressive, always pressing attack
+    const spd     = phase === 3 ? 6.8 : phase === 2 ? 5.8 : 5.0;
+    const atkFreq = phase === 3 ? 0.95 : phase === 2 ? 0.80 : 0.60;
+    const abiFreq = phase === 3 ? 0.18 : phase === 2 ? 0.10 : 0.05;
 
     // Count down post-teleport crit window and attack block
     if (this.postTeleportCrit > 0) this.postTeleportCrit--;
@@ -144,9 +149,10 @@ class Boss extends Fighter {
       return;
     }
 
-    // State machine — boss stays in attack range more aggressively
-    if (d < this.weapon.range + 50) this.aiState = 'attack';
-    else if (this.health < 100 && d > 160 && Math.random() < 0.008) this.aiState = 'evade';
+    // State machine — use horizontal distance for attack range (boss should attack even when player jumps above)
+    const fullD = dist(this, t);
+    if (d < this.weapon.range * 3.5) this.aiState = 'attack'; // wide horizontal trigger
+    else if (this.health < 120 && fullD > 160 && Math.random() < 0.008) this.aiState = 'evade';
     else this.aiState = 'chase';
 
     // Reactive shield (respects cooldown) — responds to both attacks AND incoming bullets
@@ -176,19 +182,37 @@ class Boss extends Fighter {
 
     const edgeDanger = this.isEdgeDanger(dir);
 
+    // If player is significantly below boss, walk off platform edge to chase them down
+    const playerBelow = t.y > this.y + this.h + 30;
+    if (playerBelow && this.onGround && Math.abs(dx) < 120 && Math.random() < 0.08) {
+      this.vx = dir * spd; // walk toward edge so we fall off
+    }
+
     switch (this.aiState) {
       case 'chase':
-        if (!edgeDanger) this.vx = dir * spd;
+        if (!edgeDanger || playerBelow) this.vx = dir * spd;
         else { this.vx = 0; if (this.onGround && this.platformAbove() && Math.random() < 0.10) this.vy = -18; }
         // Jump toward target on platforms above
-        if (this.onGround && t.y + t.h < this.y - 40 && !edgeDanger && Math.random() < 0.07) this.vy = -19;
+        if (this.onGround && t.y + t.h < this.y - 40 && !edgeDanger && Math.random() < 0.10) this.vy = -19;
+        // Double jump in air to reach elevated targets
+        if (!this.onGround && this.canDoubleJump && t.y + t.h < this.y - 20 && this.vy > -4 && Math.random() < 0.35) {
+          this.vy = -18; this.canDoubleJump = false;
+        }
         break;
       case 'attack':
-        this.vx *= 0.75;
+        // Keep pressure on — always creep toward target even while attacking
+        if (d < 45) this.vx *= 0.78;
+        else        this.vx = dir * spd * 0.7;
         if (canAct && Math.random() < atkFreq)       this.attack(t);
         if (canAct && Math.random() < abiFreq)       this.ability(t);
-        if (canAct && this.superReady && Math.random() < (phase === 3 ? 0.15 : 0.10)) this.useSuper(t);
-        if (this.onGround && t.y + t.h < this.y - 30 && !edgeDanger && Math.random() < 0.05) this.vy = -17;
+        if (canAct && this.superReady && Math.random() < (phase === 3 ? 0.22 : 0.14)) this.useSuper(t);
+        if (this.onGround && t.y + t.h < this.y - 25 && !edgeDanger && Math.random() < 0.12) this.vy = -18;
+        // Double jump during attack to stay on top of target
+        if (!this.onGround && this.canDoubleJump && t.y + t.h < this.y - 15 && this.vy > -3 && Math.random() < 0.40) {
+          this.vy = -17; this.canDoubleJump = false;
+        }
+        // Guaranteed attack burst when directly adjacent
+        if (canAct && d < this.weapon.range + 10 && this.cooldown <= 0) this.attack(t);
         break;
       case 'evade': {
         const eDir  = -dir;
@@ -200,10 +224,15 @@ class Boss extends Fighter {
       }
     }
 
-    // Phase 3 bonus: aggressive jumps + burst attacks
+    // Phase 2+ bonus: extra aggression
+    if (phase >= 2) {
+      if (this.onGround && !edgeDanger && Math.random() < 0.025) this.vy = -17;
+      if (canAct && Math.random() < 0.055) this.attack(t);
+    }
+    // Phase 3 bonus: burst attacks every frame when adjacent
     if (phase === 3) {
-      if (this.onGround && !edgeDanger && Math.random() < 0.030) this.vy = -17;
-      if (canAct && Math.random() < 0.035) this.attack(t);
+      if (this.onGround && !edgeDanger && Math.random() < 0.030) this.vy = -18;
+      if (canAct && this.cooldown <= 0 && d < this.weapon.range * 2) this.attack(t);
     }
 
     // Teleport (phase 2+) — NOT blocked by postSpecialPause
@@ -212,12 +241,12 @@ class Boss extends Fighter {
         this.teleportCooldown--;
       } else {
         if (!this.backstageHiding) bossTeleport(this);
-        this.teleportCooldown = phase === 3 ? 420 : 900;
+        this.teleportCooldown = phase === 3 ? 28 : 60; // 28 ticks=7s, 60 ticks=15s
       }
     }
 
     // Ability more often when target is close
-    if (canAct && t && dist(this, t) < 120 && Math.random() < 0.06) this.ability(t);
+    if (canAct && t && dist(this, t) < 150 && Math.random() < 0.09) this.ability(t);
 
     // Boss leads attacks when player moves toward it
     if (canAct && t && t.vx !== 0) {
@@ -227,24 +256,24 @@ class Boss extends Fighter {
       }
     }
 
-    // Spike attacks (blocked by postSpecialPause)
+    // Spike attacks — active from phase 1
     if (this.spikeCooldown > 0) {
       this.spikeCooldown--;
-    } else if (canAct && phase >= 2 && t) {
-      const numSpikes = 5;
+    } else if (canAct && t) {
+      const numSpikes = phase >= 2 ? 5 : 3;
       for (let i = 0; i < numSpikes; i++) {
-        const sx = clamp(t.cx() + (i - 2) * 35, 20, 880);
+        const sx = clamp(t.cx() + (i - Math.floor(numSpikes / 2)) * 40, 20, 880);
         bossSpikes.push({ x: sx, maxH: 90 + Math.random() * 50, h: 0, phase: 'rising', stayTimer: 0, done: false });
       }
-      this.spikeCooldown = phase === 3 ? 480 : 720;
-      this.postSpecialPause = 90; // 1.5s pause after spawning spikes
-      showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!']));
+      this.spikeCooldown = phase === 3 ? 24 : phase === 2 ? 36 : 48; // in AI ticks
+      this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s
+      showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!', 'From below!']));
     }
 
-    // Minion spawning (up to 2 at a time, every ~15 s, not on phase 1)
+    // Minion spawning (1 at a time phase 1, up to 2 phase 2+)
     if (this.minionCooldown > 0) {
       this.minionCooldown--;
-    } else if (phase >= 2 && minions.filter(m => m.health > 0).length < 2) {
+    } else if (minions.filter(m => m.health > 0).length < (phase >= 2 ? 2 : 1)) {
       const spawnX = Math.random() < 0.5 ? 60 : 840;
       const spawnY = 200;
       const mn     = new Minion(spawnX, spawnY);
@@ -252,22 +281,22 @@ class Boss extends Fighter {
       minions.push(mn);
       spawnParticles(spawnX, spawnY, '#bb00ee', 24);
       if (settings.screenShake) screenShake = Math.max(screenShake, 12);
-      this.minionCooldown = 60 * (phase === 3 ? 7 : 15);
+      this.minionCooldown = phase === 3 ? 20 : phase === 2 ? 36 : 52; // in AI ticks
       showBossDialogue(randChoice(['Deal with my guests!', 'MINIONS, arise!', 'Handle this!', 'You\'ll need backup...']));
     }
 
-    // Beam attacks — summons floor beams with 5-second warning (blocked by postSpecialPause)
+    // Beam attacks — active from phase 1 (fewer beams in phase 1)
     if (this.beamCooldown > 0) {
       this.beamCooldown--;
-    } else if (canAct && phase >= 2 && t) {
-      const numBeams = phase === 3 ? 4 : 2;
+    } else if (canAct && t) {
+      const numBeams = phase === 3 ? 4 : phase === 2 ? 3 : 1;
       for (let i = 0; i < numBeams; i++) {
         const spread = (i - Math.floor(numBeams / 2)) * 95;
         const bx = clamp(t.cx() + spread + (Math.random() - 0.5) * 70, 40, 860);
         bossBeams.push({ x: bx, warningTimer: 300, activeTimer: 0, phase: 'warning', done: false });
       }
-      this.beamCooldown = phase === 3 ? 280 : 560;
-      this.postSpecialPause = 90; // 1.5s pause after summoning beams
+      this.beamCooldown = phase === 3 ? 16 : phase === 2 ? 28 : 44; // in AI ticks
+      this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s
       showBossDialogue(randChoice(['Nowhere to hide!', 'Feel the void!', 'Dodge THIS!', 'From below!', 'The light will take you!']));
     }
 
@@ -401,7 +430,7 @@ function bossTeleport(boss, isForced = false) {
     openBackstagePortal(oldX, oldY, 'entry');
     boss.backstageHiding = true;
     boss.invincible      = 9999;
-    boss.teleportCooldown = 900;
+    boss.teleportCooldown = 60; // 60 ticks = 900 frames = 15s (in AI ticks)
     boss.vx = 0;
     boss.vy = 0;
     // Move boss off-screen so it cannot hit players during the portal animation
@@ -495,17 +524,20 @@ class TrueForm extends Fighter {
     this._comboCount   = 0;
     this._comboDamage  = 0;
     this._comboTimer   = 0;
-    // Special move cooldowns (in frames)
-    this._gravityCd    = 300;
-    this._warpCd       = 600;
-    this._holeCd       = 300;
-    this._floorCd      = 900;
-    this._invertCd     = 360;
-    this._sizeCd       = 360;
-    this._portalCd     = 240;
+    // Special move cooldowns (in AI TICKS — updateAI runs every 15 frames)
+    this._gravityCd    = 20;  // 20 ticks = 300 frames = 5s
+    this._warpCd       = 40;  // 40 ticks = 600 frames = 10s
+    this._holeCd       = 20;  // 5s
+    this._floorCd      = 60;  // 60 ticks = 900 frames = 15s
+    this._invertCd     = 24;  // 6s
+    this._sizeCd       = 24;  // 6s
+    this._portalCd     = 16;  // 4s
     this.postSpecialPause = 0;
     this._lastPhase    = 1;
     this._maxLives     = 1;
+    // Dodge mechanic
+    this._justDodged   = false;
+    this._dodgeTimer   = 0;
   }
 
   getPhase() {
@@ -532,6 +564,7 @@ class TrueForm extends Fighter {
   }
 
   updateAI() {
+    if (activeCinematic) return; // freeze during cinematic moments
     if (this.aiReact > 0) { this.aiReact--; return; }
     if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
     if (this.postSpecialPause > 0) { this.postSpecialPause--; return; }
@@ -540,6 +573,8 @@ class TrueForm extends Fighter {
     if (phase > this._lastPhase) {
       this._lastPhase = phase;
       if (settings.screenShake) screenShake = Math.max(screenShake, 22);
+      this.postSpecialPause = Math.max(this.postSpecialPause, 7); // 7 ticks = 105 frames = 1.75s cinematic pause
+      triggerPhaseTransition(this, phase);
     }
 
     // Combo reset: if no new attack for 90 frames, reset combo window
@@ -606,15 +641,44 @@ class TrueForm extends Fighter {
 
     // Jump to chase if target is above
     if (t.y < this.y - 50 && this.onGround) this.vy = -16;
+    // Double jump in air to reach elevated targets
+    if (!this.onGround && this.canDoubleJump && t.y < this.y - 25 && this.vy > -3 && Math.random() < 0.45) {
+      this.vy = -15; this.canDoubleJump = false;
+    }
     // Edge avoidance
     const nearLeft  = this.x < 90;
     const nearRight = this.x + this.w > GAME_W - 90;
     if (nearLeft && dir < 0) this.vx = spd * 0.6;
     if (nearRight && dir > 0) this.vx = -spd * 0.6;
 
-    // --- Attack ---
-    const atkFreq = phase === 3 ? 0.12 : phase === 2 ? 0.085 : 0.055;
+    // --- Dodge incoming attacks (never 2 in a row) ---
+    if (this._justDodged) {
+      this._dodgeTimer++;
+      if (this._dodgeTimer > 70) { this._justDodged = false; this._dodgeTimer = 0; }
+    } else {
+      const attacker = players.find(p => !p.isBoss && p.attackTimer > 0 && dist(this, p) < 85);
+      if (attacker) {
+        const dodgeChance = phase === 3 ? 0.60 : phase === 2 ? 0.42 : 0.28;
+        if (Math.random() < dodgeChance) {
+          const awayDir = this.cx() > attacker.cx() ? 1 : -1;
+          this.vx = awayDir * spd * 3.8;
+          if (this.onGround && Math.random() < 0.55) this.vy = -13;
+          this.invincible = Math.max(this.invincible, 18);
+          this._justDodged = true;
+          this._dodgeTimer = 0;
+          spawnParticles(this.cx(), this.cy(), '#000000', 10);
+          spawnParticles(this.cx(), this.cy(), '#ffffff', 5);
+        }
+      }
+    }
+
+    // --- Attack (hyper aggressive) ---
+    const atkFreq = phase === 3 ? 0.28 : phase === 2 ? 0.18 : 0.12;
     if (d < 70 && Math.random() < atkFreq && this.cooldown <= 0) {
+      this.attack(t);
+    }
+    // Bonus burst attacks when very close
+    if (d < 45 && Math.random() < (phase === 3 ? 0.12 : 0.07) && this.cooldown <= 0) {
       this.attack(t);
     }
   }
@@ -625,41 +689,41 @@ class TrueForm extends Fighter {
     if (this._holeCd    <= 0)               avail.push('holes');
     if (this._sizeCd    <= 0)               avail.push('size');
     if (this._invertCd  <= 0)               avail.push('invert');
-    if (this._warpCd    <= 0 && phase >= 2) avail.push('warp');
+    if (this._warpCd    <= 0)               avail.push('warp');
     if (this._gravityCd <= 0 && phase >= 2) avail.push('gravity');
     if (this._floorCd   <= 0 && phase >= 2 && !tfFloorRemoved) avail.push('floor');
     return avail;
   }
 
   _doSpecial(move, target) {
-    this.postSpecialPause = 55;
+    this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s pause after specials
     this._comboCount  = 0;
     this._comboDamage = 0;
     switch (move) {
       case 'gravity':
         tfGravityInverted = !tfGravityInverted;
         tfGravityTimer    = tfGravityInverted ? 600 : 0; // 10s limit when inverted
-        this._gravityCd = 720;
+        this._gravityCd = 48; // 48 AI ticks = 720 frames = 12s
         showBossDialogue(tfGravityInverted ? 'Down is up now.' : 'Gravity returns.', 180);
         spawnParticles(this.cx(), this.cy(), '#ffffff', 22);
         break;
       case 'warp': {
-        const warpPool = Object.keys(ARENAS).filter(k => !['creator','void'].includes(k));
+        const warpPool = Object.keys(ARENAS).filter(k => !['creator','void','soccer','tutorial'].includes(k));
         const newKey   = warpPool[Math.floor(Math.random() * warpPool.length)];
         tfWarpArena(newKey);
-        this._warpCd = 1200;
+        this._warpCd = 80; // 80 ticks = 1200 frames = 20s
         showBossDialogue('A new stage.', 150);
         break;
       }
       case 'holes':
         spawnTFBlackHoles();
-        this._holeCd = 540;
+        this._holeCd = 36; // 36 ticks = 540 frames = 9s
         showBossDialogue('Consume.', 110);
         break;
       case 'floor': {
         tfFloorRemoved = true;
-        tfFloorTimer   = 1200; // 20 seconds at 60fps
-        this._floorCd  = 1800;
+        tfFloorTimer   = 1200; // 20 seconds at 60fps (tfFloorTimer is decremented every frame)
+        this._floorCd  = 120; // 120 ticks = 1800 frames = 30s
         const floorPl = currentArena.platforms.find(p => p.isFloor);
         if (floorPl) floorPl.isFloorDisabled = true;
         showBossDialogue('There is no ground to stand on.', 240);
@@ -669,7 +733,7 @@ class TrueForm extends Fighter {
       }
       case 'invert':
         tfControlsInverted = !tfControlsInverted;
-        this._invertCd = 540;
+        this._invertCd = 36; // 36 ticks = 540 frames = 9s
         showBossDialogue(tfControlsInverted ? 'Your body refuses you.' : 'Control returns.', 180);
         spawnParticles(this.cx(), this.cy(), '#aaaaaa', 16);
         break;
@@ -682,13 +746,13 @@ class TrueForm extends Fighter {
         if (Math.random() < 0.45) {
           tfSetSize(this, clamp(0.5 + Math.random() * 0.9, 0.4, 1.5));
         }
-        this._sizeCd = 480;
+        this._sizeCd = 32; // 32 ticks = 480 frames = 8s
         showBossDialogue('Size means nothing here.', 180);
         break;
       }
       case 'portal':
         tfPortalTeleport(this, target);
-        this._portalCd = 360;
+        this._portalCd = 24; // 24 ticks = 360 frames = 6s
         break;
     }
   }
@@ -987,6 +1051,358 @@ function tfSetSize(fighter, scale) {
   fighter.w        = Math.round(fighter.w * scale);
   fighter.h        = Math.round(fighter.h * scale);
   fighter.tfDrawScale = scale;
+}
+
+// ============================================================
+// CINEMATIC MANAGER
+// ============================================================
+function startCinematic(seq) {
+  if (onlineMode) return; // skip cinematics in online multiplayer (sync too complex)
+  if (activeCinematic) endCinematic();
+  activeCinematic = Object.assign({ timer: 0 }, seq);
+}
+
+function updateCinematic() {
+  if (!activeCinematic) return;
+  activeCinematic.timer++;
+  const t = activeCinematic.timer / 60; // seconds
+  activeCinematic.update(t);
+  if (activeCinematic.timer >= activeCinematic.durationFrames) {
+    endCinematic();
+  }
+}
+
+function endCinematic() {
+  if (!activeCinematic) return;
+  if (activeCinematic.onEnd) activeCinematic.onEnd();
+  activeCinematic = null;
+  slowMotion = 1.0;
+  cinematicCamOverride = false;
+}
+
+// ============================================================
+// CINEMATIC SEQUENCES — one factory per boss × phase
+// ============================================================
+function _makeBossPhase2Cinematic(boss) {
+  return {
+    durationFrames: 150, // 2.5 s
+    _slamFired: false, _roarFired: false,
+    _phaseLabel: { text: '— PHASE II —', color: '#cc00ee' },
+    update(t) {
+      // Slow motion ramp: 0.15× during cinematic, fade out at end
+      if (t < 0.4)      slowMotion = Math.max(0.15, 1 - t * 2.1);
+      else if (t > 1.8) slowMotion = Math.min(1.0, (t - 1.8) / 0.7);
+      else              slowMotion = 0.15;
+
+      // Camera zoom in on boss
+      cinematicCamOverride = t < 2.2;
+      if (cinematicCamOverride && boss) {
+        cinematicZoomTarget = 1 + Math.min(0.55, t * 0.4);
+        cinematicFocusX = boss.cx();
+        cinematicFocusY = boss.cy();
+      }
+
+      // 0.6 s: slam — rings + particles + player knockback
+      if (t >= 0.6 && !this._slamFired) {
+        this._slamFired = true;
+        if (boss) {
+          for (let i = 0; i < 5; i++) {
+            phaseTransitionRings.push({ cx: boss.cx(), cy: boss.cy(),
+              r: 5 + i*14, maxR: 240 + i*30, timer: 65+i*11, maxTimer: 65+i*11,
+              color: i%2===0 ? '#cc00ee' : '#ff44ff', lineWidth: 4-i*0.5 });
+          }
+          spawnParticles(boss.cx(), boss.cy(), '#cc00ee', 40);
+          spawnParticles(boss.cx(), boss.cy(), '#ffffff', 25);
+          spawnParticles(boss.cx(), boss.cy(), '#ff44ff', 18);
+          screenShake = Math.max(screenShake, 32);
+          for (const p of players) {
+            if (p.isBoss || p.health <= 0) continue;
+            const dir = p.cx() >= boss.cx() ? 1 : -1;
+            p.vx += dir * 13; p.vy = Math.min(p.vy, -9);
+            p.hurtTimer = Math.max(p.hurtTimer, 16);
+          }
+        }
+      }
+      // 1.05 s: dialogue
+      if (t >= 1.05 && !this._roarFired) {
+        this._roarFired = true;
+        showBossDialogue('Phase two begins. This is where it gets REAL.', 220);
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+function _makeBossPhase3Cinematic(boss) {
+  return {
+    durationFrames: 180, // 3.0 s
+    _slamFired: false, _roarFired: false,
+    _phaseLabel: { text: '— PHASE III —', color: '#ff44aa' },
+    update(t) {
+      if (t < 0.3)      slowMotion = Math.max(0.05, 1 - t * 3.2);
+      else if (t > 2.2) slowMotion = Math.min(1.0, (t - 2.2) / 0.8);
+      else              slowMotion = 0.05;
+
+      cinematicCamOverride = t < 2.6;
+      if (cinematicCamOverride && boss) {
+        cinematicZoomTarget = Math.min(1.8, 1 + t * 0.55);
+        cinematicFocusX = boss.cx();
+        cinematicFocusY = boss.cy();
+      }
+
+      if (t >= 0.55 && !this._slamFired) {
+        this._slamFired = true;
+        if (boss) {
+          for (let i = 0; i < 6; i++) {
+            phaseTransitionRings.push({ cx: boss.cx(), cy: boss.cy(),
+              r: 5+i*12, maxR: 340+i*30, timer: 70+i*12, maxTimer: 70+i*12,
+              color: i%2===0 ? '#cc00ee' : '#ff0077', lineWidth: 5-i*0.6 });
+          }
+          spawnParticles(boss.cx(), boss.cy(), '#cc00ee', 55);
+          spawnParticles(boss.cx(), boss.cy(), '#ffffff', 35);
+          spawnParticles(boss.cx(), boss.cy(), '#ff0000', 22);
+          screenShake = Math.max(screenShake, 48);
+          if (settings.phaseFlash) bossPhaseFlash = 70;
+          for (const p of players) {
+            if (p.isBoss || p.health <= 0) continue;
+            const dir = p.cx() >= boss.cx() ? 1 : -1;
+            p.vx += dir * 20; p.vy = Math.min(p.vy, -14);
+            p.hurtTimer = Math.max(p.hurtTimer, 22);
+          }
+        }
+      }
+      if (t >= 1.2 && !this._roarFired) {
+        this._roarFired = true;
+        showBossDialogue('PHASE THREE. FEEL MY FULL POWER!', 250);
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+function _makeTFPhase2Cinematic(tf) {
+  return {
+    durationFrames: 150, // 2.5 s
+    _burstFired: false, _roarFired: false,
+    _phaseLabel: { text: '— FORM II —', color: '#aaaaaa' },
+    update(t) {
+      if (t < 0.35)     slowMotion = Math.max(0.1, 1 - t * 2.6);
+      else if (t > 1.8) slowMotion = Math.min(1.0, (t - 1.8) / 0.7);
+      else              slowMotion = 0.1;
+
+      cinematicCamOverride = t < 2.1;
+      if (cinematicCamOverride && tf) {
+        cinematicZoomTarget = Math.min(1.5, 1 + t * 0.4);
+        cinematicFocusX = tf.cx(); cinematicFocusY = tf.cy();
+      }
+
+      if (t >= 0.65 && !this._burstFired) {
+        this._burstFired = true;
+        if (tf) {
+          for (let i = 0; i < 5; i++) {
+            phaseTransitionRings.push({ cx: tf.cx(), cy: tf.cy(),
+              r: 5+i*13, maxR: 260+i*28, timer: 62+i*11, maxTimer: 62+i*11,
+              color: i%2===0 ? '#ffffff' : '#888888', lineWidth: 4-i*0.5 });
+          }
+          spawnParticles(tf.cx(), tf.cy(), '#ffffff', 45);
+          spawnParticles(tf.cx(), tf.cy(), '#000000', 30);
+          spawnParticles(tf.cx(), tf.cy(), '#aaaaaa', 20);
+          screenShake = Math.max(screenShake, 36);
+          for (const p of players) {
+            if (p.isBoss || p.health <= 0) continue;
+            const dir = p.cx() >= tf.cx() ? 1 : -1;
+            p.vx += dir * 14; p.vy = Math.min(p.vy, -10);
+            p.hurtTimer = Math.max(p.hurtTimer, 18);
+          }
+        }
+      }
+      if (t >= 1.1 && !this._roarFired) {
+        this._roarFired = true;
+        showBossDialogue('You surprised me... now feel TRUE despair.', 250);
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+function _makeTFPhase3Cinematic(tf) {
+  return {
+    durationFrames: 210, // 3.5 s
+    _voidFired: false, _roarFired: false,
+    _phaseLabel: { text: '— TRUE FORM —', color: '#ffffff' },
+    update(t) {
+      if (t < 0.25)     slowMotion = Math.max(0.02, 1 - t * 3.9);
+      else if (t > 2.7) slowMotion = Math.min(1.0, (t - 2.7) / 0.8);
+      else              slowMotion = 0.02;
+
+      cinematicCamOverride = t < 3.1;
+      if (cinematicCamOverride && tf) {
+        cinematicZoomTarget = Math.min(2.0, 1 + t * 0.55);
+        cinematicFocusX = tf.cx(); cinematicFocusY = tf.cy();
+      }
+
+      if (t >= 0.5 && !this._voidFired) {
+        this._voidFired = true;
+        if (tf) {
+          for (let i = 0; i < 7; i++) {
+            phaseTransitionRings.push({ cx: tf.cx(), cy: tf.cy(),
+              r: 5+i*10, maxR: 400+i*22, timer: 72+i*13, maxTimer: 72+i*13,
+              color: i%2===0 ? '#ffffff' : '#000000', lineWidth: 5-i*0.5 });
+          }
+          spawnParticles(tf.cx(), tf.cy(), '#ffffff', 65);
+          spawnParticles(tf.cx(), tf.cy(), '#000000', 50);
+          spawnParticles(tf.cx(), tf.cy(), '#555555', 28);
+          screenShake = Math.max(screenShake, 55);
+          if (settings.phaseFlash) bossPhaseFlash = 80;
+          for (const p of players) {
+            if (p.isBoss || p.health <= 0) continue;
+            const dir = p.cx() >= tf.cx() ? 1 : -1;
+            p.vx += dir * 24; p.vy = Math.min(p.vy, -18);
+            p.hurtTimer = Math.max(p.hurtTimer, 25);
+          }
+        }
+      }
+      if (t >= 1.5 && !this._roarFired) {
+        this._roarFired = true;
+        showBossDialogue('FULL RELEASE. THE END IS NOW.', 280);
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+// ============================================================
+// CINEMATIC SEQUENCES — ForestBeast and Yeti
+// ============================================================
+function _makeBeastPhase2Cinematic(beast) {
+  return {
+    durationFrames: 150, // 2.5 s
+    _rageFired: false, _roarFired: false,
+    _phaseLabel: { text: '— BEAST UNLEASHED —', color: '#cc4400' },
+    update(t) {
+      // Slow motion: slam on slow-mo, fade back at end
+      if (t < 0.3)      slowMotion = Math.max(0.15, 1 - t * 3.0);
+      else if (t > 1.8) slowMotion = Math.min(1.0,  (t - 1.8) / 0.7);
+      else              slowMotion = 0.15;
+
+      // Camera zoom to beast
+      cinematicCamOverride = t < 2.2;
+      if (cinematicCamOverride && beast) {
+        cinematicZoomTarget = Math.min(1.6, 1 + t * 0.45);
+        cinematicFocusX = beast.cx();
+        cinematicFocusY = beast.cy();
+      }
+
+      // 0.5 s: ground slam — rings + particles + knockback
+      if (t >= 0.5 && !this._rageFired) {
+        this._rageFired = true;
+        if (beast) {
+          for (let i = 0; i < 5; i++) {
+            phaseTransitionRings.push({
+              cx: beast.cx(), cy: beast.cy(),
+              r: 5 + i * 12, maxR: 260 + i * 28,
+              timer: 65 + i * 11, maxTimer: 65 + i * 11,
+              color: i % 2 === 0 ? '#cc4400' : '#ff8800', lineWidth: 4 - i * 0.5
+            });
+          }
+          spawnParticles(beast.cx(), beast.cy(), '#cc4400', 40);
+          spawnParticles(beast.cx(), beast.cy(), '#ff8800', 25);
+          spawnParticles(beast.cx(), beast.cy(), '#ffff00', 12);
+          screenShake = Math.max(screenShake, 35);
+          for (const p of players) {
+            if (p.health <= 0) continue;
+            const dir = p.cx() >= beast.cx() ? 1 : -1;
+            p.vx += dir * 11;  p.vy = Math.min(p.vy, -8);
+            p.hurtTimer = Math.max(p.hurtTimer, 14);
+          }
+        }
+      }
+      // 1.0 s: roar text
+      if (t >= 1.0 && !this._roarFired) {
+        this._roarFired = true;
+        if (settings.dmgNumbers && beast)
+          damageTexts.push(new DamageText(beast.cx(), beast.y - 30, 'RAAAWR!', '#ff6600'));
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+function _makeYetiPhase2Cinematic(yetiEnt) {
+  return {
+    durationFrames: 180, // 3.0 s
+    _leapFired: false, _slamFired: false, _roarFired: false,
+    _phaseLabel: { text: '— BLIZZARD RAGE —', color: '#88ccff' },
+    update(t) {
+      if (t < 0.3)      slowMotion = Math.max(0.10, 1 - t * 3.1);
+      else if (t > 2.2) slowMotion = Math.min(1.0,  (t - 2.2) / 0.8);
+      else              slowMotion = 0.10;
+
+      // Camera zoom to yeti
+      cinematicCamOverride = t < 2.6;
+      if (cinematicCamOverride && yetiEnt) {
+        cinematicZoomTarget = Math.min(1.7, 1 + t * 0.48);
+        cinematicFocusX = yetiEnt.cx();
+        cinematicFocusY = yetiEnt.cy();
+      }
+
+      // 0.5 s: yeti leaps upward
+      if (t >= 0.5 && !this._leapFired) {
+        this._leapFired = true;
+        if (yetiEnt) yetiEnt.vy = Math.min(yetiEnt.vy, -22);
+      }
+
+      // 1.2 s: slam down + ice shockwave
+      if (t >= 1.2 && !this._slamFired) {
+        this._slamFired = true;
+        if (yetiEnt) {
+          yetiEnt.vy = Math.max(yetiEnt.vy, 18); // force downward
+          for (let i = 0; i < 6; i++) {
+            phaseTransitionRings.push({
+              cx: yetiEnt.cx(), cy: yetiEnt.cy(),
+              r: 5 + i * 12, maxR: 300 + i * 30,
+              timer: 68 + i * 12, maxTimer: 68 + i * 12,
+              color: i % 2 === 0 ? '#88ccff' : '#ffffff', lineWidth: 4.5 - i * 0.5
+            });
+          }
+          spawnParticles(yetiEnt.cx(), yetiEnt.cy(), '#aaddff', 50);
+          spawnParticles(yetiEnt.cx(), yetiEnt.cy(), '#ffffff', 30);
+          spawnParticles(yetiEnt.cx(), yetiEnt.cy(), '#0066ff', 18);
+          screenShake = Math.max(screenShake, 42);
+          if (settings.phaseFlash) bossPhaseFlash = 55;
+          for (const p of players) {
+            if (p.health <= 0) continue;
+            const dir = p.cx() >= yetiEnt.cx() ? 1 : -1;
+            p.vx += dir * 16;  p.vy = Math.min(p.vy, -12);
+            p.stunTimer  = Math.max(p.stunTimer  || 0, 40);
+            p.hurtTimer  = Math.max(p.hurtTimer, 18);
+          }
+        }
+      }
+      // 1.8 s: roar text
+      if (t >= 1.8 && !this._roarFired) {
+        this._roarFired = true;
+        if (settings.dmgNumbers && yetiEnt)
+          damageTexts.push(new DamageText(yetiEnt.cx(), yetiEnt.y - 35, 'BLIZZARD!', '#aaddff'));
+      }
+    },
+    onEnd() { slowMotion = 1.0; cinematicCamOverride = false; }
+  };
+}
+
+// ============================================================
+// PHASE TRANSITION — triggers appropriate cinematic sequence
+// ============================================================
+function triggerPhaseTransition(entity, phase) {
+  if (entity.isTrueForm) {
+    startCinematic(phase === 2 ? _makeTFPhase2Cinematic(entity) : _makeTFPhase3Cinematic(entity));
+  } else if (entity.isBeast) {
+    startCinematic(_makeBeastPhase2Cinematic(entity));
+  } else if (entity.isYeti) {
+    startCinematic(_makeYetiPhase2Cinematic(entity));
+  } else {
+    startCinematic(phase === 2 ? _makeBossPhase2Cinematic(entity) : _makeBossPhase3Cinematic(entity));
+  }
 }
 
 function resetTFState() {

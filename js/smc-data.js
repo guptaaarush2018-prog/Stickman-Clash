@@ -259,6 +259,52 @@ function initMapPerks(key) {
   }
 }
 
+// Helper used by both the random forest encounter logic and the Director.
+function spawnForestBeastNow() {
+  if (!currentArena || forestBeast || forestBeastCooldown > 0) return;
+  const pls = currentArena.platforms;
+  if (!pls || pls.length === 0) return;
+  const pl  = pls[Math.floor(Math.random() * pls.length)];
+  const spawnX = pl.x + Math.random() * pl.w;
+  const spawnY = pl.y - 62;
+  forestBeast = new ForestBeast(spawnX, spawnY);
+  // 1/10 chance: spawn as raged beast (lower HP, higher everything else)
+  if (Math.random() < 0.10) {
+    forestBeast.isRaged     = true;
+    forestBeast.health      = 180;
+    forestBeast.maxHealth   = 180;
+    forestBeast.dmgMult     = 2.2;
+    forestBeast.kbBonus     = 1.8;
+    forestBeast.kbResist    = 0.25;
+    forestBeast.color       = '#ff2200';
+    forestBeast.name        = 'RAGED BEAST';
+    // Speed handled in updateAI via dash cooldown tweak
+    forestBeast.dashCooldown = 60;
+  }
+  // Target the player with lowest health
+  const livingPlayers = players.filter(p => !p.isBoss && p.health > 0);
+  if (livingPlayers.length > 0) {
+    forestBeast.target = livingPlayers.reduce((a, b) => a.health < b.health ? a : b);
+  }
+  minions.push(forestBeast);
+  spawnParticles(spawnX, spawnY, forestBeast.isRaged ? '#ff2200' : '#1a8a2e', 20);
+  if (settings.screenShake) screenShake = Math.max(screenShake, 10);
+  const beastLabel = forestBeast.isRaged ? 'RAGED BEAST!' : 'BEAST APPEARS!';
+  if (settings.dmgNumbers) damageTexts.push(new DamageText(spawnX, spawnY - 20, beastLabel, forestBeast.isRaged ? '#ff4400' : '#1aff3a'));
+}
+
+// Helper used by both the random ice encounter logic and the Director.
+function spawnYetiNow() {
+  if (!currentArena || yeti || yetiCooldown > 0) return;
+  const spawnX = Math.random() < 0.5 ? 60 : GAME_W - 60;
+  yeti = new Yeti(spawnX, 200);
+  const living = players.filter(p => !p.isBoss && p.health > 0);
+  yeti.target = living[0] || players[0];
+  minions.push(yeti);
+  spawnParticles(spawnX, 200, '#88ccff', 20);
+  if (settings.dmgNumbers) damageTexts.push(new DamageText(GAME_W / 2, 80, 'A YETI APPEARS!', '#88ccff'));
+}
+
 function updateMapPerks() {
   if (!currentArena || !gameRunning) return;
 
@@ -377,40 +423,12 @@ function updateMapPerks() {
     if (forestBeast && forestBeast.health <= 0) {
       _achCheckBeastDead();
       forestBeast = null;
-      forestBeastCooldown = 1800; // 30s cooldown after death
+      forestBeastCooldown = 900; // 15s cooldown after death
     }
     if (forestBeastCooldown > 0) forestBeastCooldown--;
-    // 1/1000 chance per second to spawn (checked once per second)
-    if (!forestBeast && forestBeastCooldown <= 0 && frameCount % 60 === 0 && Math.random() < 0.01) {
-      // Spawn on a random platform edge in the forest arena
-      const pls = currentArena.platforms;
-      const pl  = pls[Math.floor(Math.random() * pls.length)];
-      const spawnX = pl.x + Math.random() * pl.w;
-      const spawnY = pl.y - 62;
-      forestBeast = new ForestBeast(spawnX, spawnY);
-      // 1/10 chance: spawn as raged beast (lower HP, higher everything else)
-      if (Math.random() < 0.10) {
-        forestBeast.isRaged     = true;
-        forestBeast.health      = 180;
-        forestBeast.maxHealth   = 180;
-        forestBeast.dmgMult     = 2.2;
-        forestBeast.kbBonus     = 1.8;
-        forestBeast.kbResist    = 0.25;
-        forestBeast.color       = '#ff2200';
-        forestBeast.name        = 'RAGED BEAST';
-        // Speed handled in updateAI via dash cooldown tweak
-        forestBeast.dashCooldown = 60;
-      }
-      // Target the player with lowest health
-      const livingPlayers = players.filter(p => !p.isBoss && p.health > 0);
-      if (livingPlayers.length > 0) {
-        forestBeast.target = livingPlayers.reduce((a, b) => a.health < b.health ? a : b);
-      }
-      minions.push(forestBeast);
-      spawnParticles(spawnX, spawnY, forestBeast.isRaged ? '#ff2200' : '#1a8a2e', 20);
-      if (settings.screenShake) screenShake = Math.max(screenShake, 10);
-      const beastLabel = forestBeast.isRaged ? 'RAGED BEAST!' : 'BEAST APPEARS!';
-      if (settings.dmgNumbers) damageTexts.push(new DamageText(spawnX, spawnY - 20, beastLabel, forestBeast.isRaged ? '#ff4400' : '#1aff3a'));
+    // ~1/250 chance per second to spawn (checked once per second) — more common than before
+    if (!forestBeast && forestBeastCooldown <= 0 && frameCount % 60 === 0 && Math.random() < 0.04) {
+      spawnForestBeastNow();
     }
   }
 
@@ -559,14 +577,8 @@ function updateMapPerks() {
     if (yetiCooldown > 0) yetiCooldown--;
     // Can't spawn: still on cooldown, one already alive, or first 15s of game haven't passed
     const yetiMinStartFrame = 900; // 15 seconds at 60fps
-    if (!yeti && yetiCooldown <= 0 && frameCount >= yetiMinStartFrame && Math.random() < 1/200) {
-      const spawnX = Math.random() < 0.5 ? 60 : GAME_W - 60;
-      yeti = new Yeti(spawnX, 200);
-      const living = players.filter(p => !p.isBoss && p.health > 0);
-      yeti.target = living[0] || players[0];
-      minions.push(yeti);
-      spawnParticles(spawnX, 200, '#88ccff', 20);
-      if (settings.dmgNumbers) damageTexts.push(new DamageText(GAME_W / 2, 80, 'A YETI APPEARS!', '#88ccff'));
+    if (!yeti && yetiCooldown <= 0 && frameCount >= yetiMinStartFrame && Math.random() < 1/400) {
+      spawnYetiNow();
     }
   }
 
@@ -838,77 +850,83 @@ function drawMapPerks() {
 // ============================================================
 const WEAPONS = {
   sword: {
-    // Fast gap-closer. Good damage, moderate reach.
-    name: 'Sword',   damage: 18, range: 74, cooldown: 36,
-    kb: 11,          abilityCooldown: 140, type: 'melee', color: '#cccccc',
+    // THE ALL-ROUNDER: Fast, mobile, reliable. Jack of all trades.
+    // Identity: Dash Slash chases and punishes. Great neutral game.
+    name: 'Sword',   damage: 16, range: 74, cooldown: 30, endlag: 7,
+    kb: 10,          abilityCooldown: 150, type: 'melee', color: '#cccccc',
     abilityName: 'Dash Slash',
     ability(user, target) {
-      user.vx = user.facing * 18;
-      if (dist(user, target) < 140) dealDamage(user, target, 36, 18);
+      user.vx = user.facing * 16;
+      if (dist(user, target) < 130) dealDamage(user, target, 28, 16);
     }
   },
   hammer: {
-    // Devastating but very slow. Short range forces commitment.
-    name: 'Hammer',  damage: 28, range: 54, cooldown: 50,
-    kb: 20,          abilityCooldown: 210, type: 'melee', color: '#888888',
+    // THE CRUSHER: Slow, punishing, massive knockback. Forces commitment.
+    // Identity: Every hit sends enemies flying. One good read = huge reward.
+    name: 'Hammer',  damage: 32, range: 58, cooldown: 54, endlag: 18,
+    kb: 28,          abilityCooldown: 205, type: 'melee', color: '#888888',
     abilityName: 'Ground Slam',
     ability(user, target) {
       screenShake = Math.max(screenShake, 32);
       spawnRing(user.cx(), user.y + user.h);
-      if (dist(user, target) < 145) dealDamage(user, target, 34, 26);
+      if (dist(user, target) < 145) dealDamage(user, target, 42, 30);
     }
   },
   gun: {
-    // Ranged weapon. Each bullet deals 5–8 random damage.
-    name: 'Gun',     damage: 10, range: 600, cooldown: 38,
-    damageFunc: () => Math.floor(Math.random() * 4) + 5,
+    // THE HARASSER: Reliable ranged poke. Rewards keeping distance.
+    // Identity: Steady chip damage + burst fire ability. Control space.
+    name: 'Gun',     damage: 10, range: 600, cooldown: 34, endlag: 3,
+    damageFunc: () => Math.floor(Math.random() * 4) + 6,
     superRateBonus: 2.8,
     splashRange: 38, splashDmgPct: 0.30,
-    kb: 6,           abilityCooldown: 150, type: 'ranged', color: '#666666',
+    kb: 7,           abilityCooldown: 140, type: 'ranged', color: '#666666',
     abilityName: 'Rapid Fire',
     ability(user, _target) {
       for (let i = 0; i < 5; i++) {
         setTimeout(() => {
           if (!gameRunning || user.health <= 0) return;
-          spawnBullet(user, 14 + (Math.random()-0.5)*2, '#ffdd00');
+          spawnBullet(user, 12 + (Math.random()-0.5)*2, '#ffdd00');
         }, i * 80);
       }
     }
   },
   axe: {
-    // Balanced all-rounder. Spin ability covers both sides.
-    name: 'Axe',     damage: 22, range: 70, cooldown: 44,
-    splashRange: 95, splashDmgPct: 0.55,
-    kb: 14,          abilityCooldown: 150, type: 'melee', color: '#cc4422',
+    // THE SPINNER: Mid-range AoE brawler. Covers angles, not pure damage.
+    // Identity: Spin Attack is a defensive escape AND offensive tool. Trades raw dmg for coverage.
+    name: 'Axe',     damage: 17, range: 68, cooldown: 48, endlag: 14,
+    splashRange: 70, splashDmgPct: 0.38,
+    kb: 12,          abilityCooldown: 165, type: 'melee', color: '#cc4422',
     abilityName: 'Spin Attack',
     ability(user, target) {
       user.spinning = 30;
-      if (dist(user, target) < 120) dealDamage(user, target, 30, 18);
+      if (dist(user, target) < 110) dealDamage(user, target, 22, 14);
     }
   },
   spear: {
-    // Longest reach, consistent damage. Rewards spacing.
-    name: 'Spear',   damage: 18, range: 105, cooldown: 36,
-    kb: 10,          abilityCooldown: 155, type: 'melee', color: '#8888ff',
+    // THE POKER: Longest melee reach. Safe, consistent, spacing-dependent.
+    // Identity: Never lets enemies get close. Low KB keeps spacing tight for follow-ups.
+    name: 'Spear',   damage: 20, range: 115, cooldown: 40, endlag: 10,
+    kb: 8,           abilityCooldown: 150, type: 'melee', color: '#8888ff',
     abilityName: 'Lunge',
     ability(user, target) {
       user.vx = user.facing * 16;
-      user.vy = -6;
-      if (dist(user, target) < 155) dealDamage(user, target, 30, 15);
+      user.vy = -5;
+      if (dist(user, target) < 150) dealDamage(user, target, 26, 12);
     }
   },
   bow: {
-    // Long-range arc weapon. Class-specific to Archer.
-    name: 'Bow',  damage: 0, range: 700, cooldown: 52,
-    damageFunc: () => Math.floor(12 + Math.random() * 8),
-    kb: 12,       abilityCooldown: 180, type: 'ranged', color: '#aad47a',
+    // THE SNIPER: Highest single-shot ranged damage. Archer class only.
+    // Identity: Huge range, powerful arrow, but slow fire rate demands good aim.
+    name: 'Bow',  damage: 0, range: 700, cooldown: 52, endlag: 4,
+    damageFunc: () => Math.floor(14 + Math.random() * 8),
+    kb: 14,       abilityCooldown: 185, type: 'ranged', color: '#aad47a',
     requiresClass: 'archer',
     abilityName: 'Triple Shot',
     ability(user, _target) {
-      const angles = [-0.2, 0, 0.2];
+      const angles = [-0.22, 0, 0.22];
       for (let i = 0; i < 3; i++) {
         const dmg = user.weapon.damageFunc();
-        const speed = 12;
+        const speed = 13;
         const vx = user.facing * speed * Math.cos(angles[i]);
         const vy = speed * Math.sin(angles[i]);
         projectiles.push(new Projectile(user.cx() + user.facing * 12, user.y + 22, vx, vy, user, dmg, '#aad47a'));
@@ -916,160 +934,167 @@ const WEAPONS = {
     }
   },
   shield: {
-    // Defensive melee. High KB pushback. Class-specific to Paladin.
-    name: 'Shield', damage: 10, range: 52, cooldown: 38,
-    kb: 22,         abilityCooldown: 200, type: 'melee', color: '#88aaff',
+    // THE WALL: Lowest damage, highest block and pushback. Paladin class only.
+    // Identity: You don't kill with damage — you kill by shoving enemies off platforms.
+    name: 'Shield', damage: 10, range: 52, cooldown: 36, endlag: 9,
+    kb: 26,         abilityCooldown: 195, type: 'melee', color: '#88aaff',
     requiresClass: 'paladin',
     contactDmgMult: 0,
     abilityName: 'Shield Bash',
     ability(user, target) {
-      if (dist(user, target) < 100) {
-        target.vx  = user.facing * 28;
-        target.stunTimer = Math.max(target.stunTimer || 0, 25);
-        dealDamage(user, target, 14, 24);
+      if (dist(user, target) < 105) {
+        target.vx  = user.facing * 32;
+        target.stunTimer = Math.max(target.stunTimer || 0, 22);
+        dealDamage(user, target, 14, 28);
         spawnParticles(target.cx(), target.cy(), '#88aaff', 10);
       }
     }
   },
   scythe: {
-    // Wide sweep melee. Heals on hit.
-    name: 'Scythe', damage: 20, range: 110, cooldown: 34,
-    splashRange: 70, splashDmgPct: 0.6,
-    kb: 13,          abilityCooldown: 160, type: 'melee', color: '#aa44aa',
+    // THE SUSTAINER: Wide sweep with lifesteal. Weaker 1v1, stronger vs groups.
+    // Identity: Fights multiple targets simultaneously. Healing rewards multi-hit risks.
+    name: 'Scythe', damage: 16, range: 100, cooldown: 40, endlag: 11,
+    splashRange: 60, splashDmgPct: 0.45,
+    kb: 10,          abilityCooldown: 180, type: 'melee', color: '#aa44aa',
     abilityName: 'Reaping Sweep',
     ability(user, _target) {
       let healed = 0;
       for (const p of players) {
         if (p === user || p.health <= 0) continue;
-        if (dist(user, p) < 130) { dealDamage(user, p, 16, 10); healed++; }
+        if (dist(user, p) < 125) { dealDamage(user, p, 14, 8); healed++; }
       }
       for (const d of trainingDummies) {
-        if (d.health > 0 && dist(user, d) < 130) { dealDamage(user, d, 16, 10); healed++; }
+        if (d.health > 0 && dist(user, d) < 125) { dealDamage(user, d, 14, 8); healed++; }
       }
       if (healed > 0) {
-        user.health = Math.min(user.maxHealth, user.health + healed * 5);
+        user.health = Math.min(user.maxHealth, user.health + healed * 4);
         spawnParticles(user.cx(), user.cy(), '#aa44aa', 12);
       }
     }
   },
   fryingpan: {
-    // Slow heavy swing. High KB, short stun. Balanced by slow swing.
-    name: 'Frying Pan', damage: 20, range: 58, cooldown: 52,
-    kb: 22,              abilityCooldown: 190, type: 'melee', color: '#ccaa44',
+    // THE STUNNER: Slow but delivers punishing stun windows. Reads = reward.
+    // Identity: Land the slow swing → stun window → follow-up combo. High risk, high reward.
+    name: 'Frying Pan', damage: 26, range: 60, cooldown: 50, endlag: 16,
+    kb: 16,              abilityCooldown: 185, type: 'melee', color: '#ccaa44',
     abilityName: 'Pan Slam',
     ability(user, target) {
-      if (dist(user, target) < 100) {
-        dealDamage(user, target, 28, 28);
-        target.stunTimer = Math.max(target.stunTimer || 0, 40); // 0.67s stun
+      if (dist(user, target) < 105) {
+        dealDamage(user, target, 34, 20);
+        target.stunTimer = Math.max(target.stunTimer || 0, 35); // 0.58s stun
         spawnParticles(target.cx(), target.cy(), '#ffdd66', 12);
         screenShake = Math.max(screenShake, 16);
       }
     }
   },
   broomstick: {
-    // Long reach but low damage. Pushes enemies back. Spacing weapon.
-    name: 'Broomstick', damage: 10, range: 130, cooldown: 34,
-    kb: 16,              abilityCooldown: 160, type: 'melee', color: '#aa8855',
+    // THE PUSHER: Long reach + extreme knockback. Kills by platform denial.
+    // Identity: Lowest damage, highest push force. Win by edgeguarding.
+    name: 'Broomstick', damage: 12, range: 125, cooldown: 32, endlag: 8,
+    kb: 22,              abilityCooldown: 155, type: 'melee', color: '#aa8855',
     abilityName: 'Sweep',
     ability(user, target) {
-      user.vx = user.facing * 10;
-      if (dist(user, target) < 170) {
-        dealDamage(user, target, 12, 24);
-        target.vx += user.facing * 18; // big push
+      user.vx = user.facing * 12;
+      if (dist(user, target) < 165) {
+        dealDamage(user, target, 14, 18);
+        target.vx += user.facing * 24; // huge push toward edge
         spawnParticles(target.cx(), target.cy(), '#cc9966', 10);
       }
     }
   },
   boxinggloves: {
-    // Very fast combos. Low damage per hit but chains quickly.
-    name: 'Boxing Gloves', damage: 7, range: 52, cooldown: 16,
-    kb: 5,                 abilityCooldown: 120, type: 'melee', color: '#ee3333',
+    // THE BRAWLER: Fastest attack speed in the game. Wins by relentless pressure.
+    // Identity: Lowest range, must stay face-to-face. Rapid Combo is the identity skill.
+    name: 'Boxing Gloves', damage: 9, range: 50, cooldown: 14, endlag: 2,
+    kb: 4,                 abilityCooldown: 110, type: 'melee', color: '#ee3333',
     abilityName: 'Rapid Combo',
     ability(user, target) {
       let count = 0;
       const doHit = () => {
         if (!gameRunning || user.health <= 0) return;
         if (dist(user, target) < 90) {
-          dealDamage(user, target, 9, 5);
+          dealDamage(user, target, 11, 4);
           spawnParticles(target.cx(), target.cy(), '#ff4444', 4);
         }
         count++;
-        if (count < 5) setTimeout(doHit, 100);
+        if (count < 5) setTimeout(doHit, 90);
       };
       doHit();
     }
   },
   peashooter: {
-    // Rapid-fire, very low damage per shot. Pestering weapon.
-    name: 'Pea Shooter', damage: 0, range: 700, cooldown: 10,
-    damageFunc: () => 2 + Math.floor(Math.random() * 2), // 2-3 per shot
+    // THE HARASSER: Fastest fire rate. Chip damage and interrupts enemy combos.
+    // Identity: Each shot is weak but relentless. Storm ability dumps huge lead.
+    name: 'Pea Shooter', damage: 0, range: 700, cooldown: 9, endlag: 1,
+    damageFunc: () => 3 + Math.floor(Math.random() * 3), // 3-5 per shot
     bulletSpeed: 15, bulletColor: '#44cc44',
-    kb: 2,               abilityCooldown: 130, type: 'ranged', color: '#44cc44',
+    kb: 3,               abilityCooldown: 120, type: 'ranged', color: '#44cc44',
     abilityName: 'Pea Storm',
     ability(user, _target) {
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 9; i++) {
         setTimeout(() => {
           if (!gameRunning || user.health <= 0) return;
-          const angle = (Math.random() - 0.5) * 0.3;
-          const spd   = 12 + Math.random() * 3;
+          const angle = (Math.random() - 0.5) * 0.28;
+          const spd   = 13 + Math.random() * 3;
           projectiles.push(new Projectile(
             user.cx() + user.facing * 12, user.y + 22,
             user.facing * spd * Math.cos(angle), spd * Math.sin(angle),
             user, user.weapon.damageFunc(), '#44cc44'
           ));
-        }, i * 60);
+        }, i * 65);
       }
     }
   },
   slingshot: {
-    // Slower fire rate, arc projectile, moderate damage.
-    name: 'Slingshot', damage: 0, range: 650, cooldown: 50,
-    damageFunc: () => 12 + Math.floor(Math.random() * 6), // 12-17 per shot
+    // THE AIM-REWARDING SNIPER: Highest per-shot ranged damage. Slow but punishing.
+    // Identity: Arc trajectory demands prediction. Land a hit = big reward.
+    name: 'Slingshot', damage: 0, range: 650, cooldown: 50, endlag: 5,
+    damageFunc: () => 15 + Math.floor(Math.random() * 7), // 15-21 per shot
     bulletSpeed: 10, bulletColor: '#ff9933', bulletVy: -1.5,
-    kb: 10,            abilityCooldown: 200, type: 'ranged', color: '#cc8833',
+    kb: 14,            abilityCooldown: 190, type: 'ranged', color: '#cc8833',
     abilityName: 'Power Stone',
     ability(user, target) {
-      // Fires a larger, faster stone with splash
       const dx = (target.cx() - user.cx()) || 1;
       const dy = (target.cy() - user.cy()) || 1;
       const len = Math.hypot(dx, dy);
       const proj = new Projectile(
         user.cx() + user.facing * 12, user.y + 22,
         (dx / len) * 16, (dy / len) * 16,
-        user, 24, '#ff9933'
+        user, 30, '#ff9933'
       );
       proj.splashRange = 60;
-      proj.dmg = 24;
+      proj.dmg = 30;
       projectiles.push(proj);
     }
   },
   paperairplane: {
-    // Slow curving projectile. Low damage but confusing arc.
-    name: 'Paper Airplane', damage: 0, range: 800, cooldown: 38,
-    damageFunc: () => 6 + Math.floor(Math.random() * 4), // 6-9 per shot
+    // THE TRICKSTER: Unpredictable arc confuses and disrupts. Unique flight path.
+    // Identity: Angles and curves opponents can't predict. Barrage forces dodging.
+    name: 'Paper Airplane', damage: 0, range: 800, cooldown: 35, endlag: 2,
+    damageFunc: () => 8 + Math.floor(Math.random() * 5), // 8-12 per shot
     bulletSpeed: 7, bulletColor: '#aaccff', bulletVy: -0.5,
-    kb: 4,                  abilityCooldown: 170, type: 'ranged', color: '#ddeeff',
+    kb: 6,                  abilityCooldown: 160, type: 'ranged', color: '#ddeeff',
     abilityName: 'Paper Barrage',
     ability(user, _target) {
-      for (let i = 0; i < 4; i++) {
+      for (let i = 0; i < 5; i++) {
         setTimeout(() => {
           if (!gameRunning || user.health <= 0) return;
-          const angle = (Math.random() - 0.5) * 0.5;
+          const angle = (Math.random() - 0.5) * 0.55;
           projectiles.push(new Projectile(
             user.cx() + user.facing * 12, user.y + 20,
-            user.facing * (8 + Math.random() * 4) * Math.cos(angle),
-            (8 + Math.random() * 4) * Math.sin(angle) - 2,
+            user.facing * (8 + Math.random() * 5) * Math.cos(angle),
+            (8 + Math.random() * 5) * Math.sin(angle) - 2,
             user, user.weapon.damageFunc(), '#aaccff'
           ));
-        }, i * 140);
+        }, i * 120);
       }
     }
   },
   gauntlet: {
-    // Boss-only weapon. Low base contact damage, massive void slam ability.
-    name: 'Gauntlet', damage: 5, range: 34, cooldown: 30,
-    kb: 10,            abilityCooldown: 200, type: 'melee', color: '#9900ee',
-    contactDmgMult: 0.4,
+    // Boss-only weapon. Heavy hitting melee, massive void slam ability.
+    name: 'Gauntlet', damage: 18, range: 44, cooldown: 22,
+    kb: 18,            abilityCooldown: 160, type: 'melee', color: '#9900ee',
+    contactDmgMult: 0.55,
     abilityName: 'Void Slam',
     ability(user, _target) {
       screenShake = Math.max(screenShake, 28);
@@ -1103,14 +1128,14 @@ const WEAPON_KEYS = Object.keys(WEAPONS).filter(k => k !== 'gauntlet' && k !== '
 // ============================================================
 const CLASSES = {
   none:      { name: 'None',      desc: 'Standard balanced fighter',            weapon: null,     hp: 100, speedMult: 1.00, perk: null           },
-  thor:      { name: 'Thor',      desc: 'Hammer master, thunder on dash',       weapon: 'hammer', hp: 115, speedMult: 0.90, perk: 'thunder'      },
-  kratos:    { name: 'Kratos',    desc: 'Axe specialist, rage on hit',          weapon: 'axe',    hp: 125, speedMult: 0.92, perk: 'rage'         },
-  ninja:     { name: 'Ninja',     desc: 'Fast sword fighter, quick dash',       weapon: 'sword',  hp: 80,  speedMult: 1.22, perk: 'swift'        },
-  gunner:    { name: 'Gunner',    desc: 'Dual-shot gunslinger',                 weapon: 'gun',    hp: 95,  speedMult: 1.05, perk: 'dual_shot'    },
-  archer:    { name: 'Archer',    desc: 'Bow-only. Fast. Auto-backstep at low HP.', weapon: 'bow', hp: 85,  speedMult: 1.18, perk: 'backstep'    },
-  paladin:   { name: 'Paladin',   desc: 'Shield-only. Tanky. 15% dmg reduction.', weapon: 'shield', hp: 130, speedMult: 0.88, perk: 'holy_light' },
-  berserker:  { name: 'Berserker',  desc: 'Any weapon. Rage boosts dmg at low HP.',             weapon: null, hp: 120, speedMult: 1.10, perk: 'blood_frenzy' },
-  megaknight: { name: 'Megaknight', desc: 'Legendary knight. Smash, uppercut, and crush enemies.', weapon: 'mkgauntlet', hp: 180, speedMult: 0.82, perk: null },
+  thor:      { name: 'Thor',      desc: 'Hammer master, thunder on dash',       weapon: 'hammer', hp: 112, speedMult: 0.90, perk: 'thunder'      },
+  kratos:    { name: 'Kratos',    desc: 'Axe specialist, rage at low HP',       weapon: 'axe',    hp: 110, speedMult: 0.95, perk: 'rage'         },
+  ninja:     { name: 'Ninja',     desc: 'Fast sword fighter, quick dash',       weapon: 'sword',  hp: 78,  speedMult: 1.24, perk: 'swift'        },
+  gunner:    { name: 'Gunner',    desc: 'Dual-shot gunslinger',                 weapon: 'gun',    hp: 92,  speedMult: 1.06, perk: 'dual_shot'    },
+  archer:    { name: 'Archer',    desc: 'Bow-only. Fast. Auto-backstep at low HP.', weapon: 'bow', hp: 82,  speedMult: 1.20, perk: 'backstep'    },
+  paladin:   { name: 'Paladin',   desc: 'Shield-only. Tanky. 15% dmg reduction.', weapon: 'shield', hp: 132, speedMult: 0.88, perk: 'holy_light' },
+  berserker:  { name: 'Berserker',  desc: 'Any weapon. Rage boosts dmg at low HP.',             weapon: null, hp: 115, speedMult: 1.08, perk: 'blood_frenzy' },
+  megaknight: { name: 'Megaknight', desc: 'Legendary knight. Smash, uppercut, and crush enemies.', weapon: 'mkgauntlet', hp: 165, speedMult: 0.84, perk: null },
 };
 
 // ============================================================

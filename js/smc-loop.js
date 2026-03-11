@@ -22,7 +22,7 @@ function updateCamera() {
       const PAD   = 80;
       const zoomX = GAME_W / ((maxX - minX) + PAD);
       const zoomY = GAME_H / ((maxY - minY) + PAD);
-      targetZoom  = Math.max(Math.min(zoomX, zoomY), 0.45);
+      targetZoom  = Math.max(Math.min(zoomX, zoomY), 0.62);
       targetX     = (minX + maxX) / 2;
       targetY     = (minY + maxY) / 2;
     }
@@ -59,8 +59,12 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
     return;
   }
+  // Tick active cinematic (before input and physics)
+  updateCinematic();
   frameCount++;
   aiTick++;
+  // Approximate real delta-time at 60fps for Director
+  if (typeof updateDirector === 'function') updateDirector(1/60);
 
   // ---------- Phase: updateInput ----------
   // Online: tick network + apply remote player state
@@ -201,6 +205,13 @@ function gameLoop() {
     camCY   = camYCur;
   }
 
+  // Cinematic camera: smoothly zoom in on focal point during cinematic
+  if (cinematicCamOverride) {
+    camZoom += (cinematicZoomTarget - camZoom) * 0.09;
+    camCX   += (cinematicFocusX    - camCX)   * 0.07;
+    camCY   += (cinematicFocusY    - camCY)   * 0.07;
+  }
+
   const finalScX = baseScaleX * camZoom;
   const finalScY = baseScaleY * camZoom;
 
@@ -337,6 +348,7 @@ function gameLoop() {
   drawCurseAuras();
   updateAndDrawLightningBolts();
   if (gameMode === 'trueform') drawTFBlackHoles();
+  drawPhaseTransitionRings();
   checkWeaponSparks();
 
   // Ability activation ring flash
@@ -455,6 +467,7 @@ function gameLoop() {
   }
   // Achievement popups (drawn over everything, in screen space)
   ctx.setTransform(1, 0, 0, 1, 0, 0); // reset transform for screen-space draw
+  drawCinematicOverlay();
   drawAchievementPopups();
   drawEdgeIndicators(finalScX, finalScY, camCX, camCY);
   // Restore the stable game transform after (remaining draws use it already)
@@ -566,6 +579,7 @@ const SHIELD_CD     = 900; // 30-second cooldown at 60 fps
 
 function processInput() {
   if (!gameRunning || paused) return;
+  if (activeCinematic) return; // freeze player controls during boss cinematics
 
   // Update key-held counters
   for (const k of keysDown) keyHeldFrames[k] = (keyHeldFrames[k] || 0) + 1;
