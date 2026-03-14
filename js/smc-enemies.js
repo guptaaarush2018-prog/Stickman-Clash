@@ -472,6 +472,9 @@ class Dummy extends Fighter {
     this.vx *= 0.80;
     this.vy  = clamp(this.vy, -20, 19);
     this.onGround = false;
+    // Ceiling
+    const _ceilY = currentArena && currentArena.isLowGravity ? -60 : -20;
+    if (this.y < _ceilY) { this.y = _ceilY; if (this.vy < 0) this.vy = 0; }
     for (const pl of currentArena.platforms) this.checkPlatform(pl);
     // Auto-reset if falls off
     if (this.y > 640) { this.x = this.spawnX; this.y = this.spawnY - 60; this.vy = 0; this.health = this.maxHealth; }
@@ -489,6 +492,78 @@ class Dummy extends Fighter {
   useSuper() {}
   activateSuper() {}
   updateAI() {}
+
+  draw() {
+    // Always draw — explicit override so the dummy is never invisible
+    ctx.save();
+    // Invincibility blink
+    if (this.invincible > 0 && Math.floor(this.invincible / 5) % 2 === 1) {
+      ctx.globalAlpha = 0.35;
+    }
+    const cx = this.x + this.w / 2;
+    const ty = this.y;
+    const bw = this.w;      // body width (~20)
+    const bh = this.h;      // body height (~50)
+
+    // Hurt flash
+    const hurt = this.hurtTimer > 0;
+    const bodyCol = hurt ? '#ff6666' : '#999999';
+    const headCol = hurt ? '#ffaaaa' : '#cccccc';
+
+    // Ragdoll rotation when knocked back
+    if (this.ragdollTimer > 0) {
+      ctx.translate(cx, ty + bh * 0.45);
+      ctx.rotate(this.ragdollAngle || 0);
+      ctx.translate(-cx, -(ty + bh * 0.45));
+    }
+
+    // Body (torso)
+    ctx.fillStyle = bodyCol;
+    ctx.fillRect(cx - bw * 0.3, ty + bh * 0.32, bw * 0.6, bh * 0.38);
+
+    // Head
+    ctx.fillStyle = headCol;
+    ctx.beginPath();
+    ctx.arc(cx, ty + bh * 0.15, bh * 0.14, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes (simple dots)
+    ctx.fillStyle = '#444';
+    ctx.beginPath(); ctx.arc(cx - 3, ty + bh * 0.13, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx + 3, ty + bh * 0.13, 2, 0, Math.PI * 2); ctx.fill();
+
+    // Left arm
+    ctx.fillStyle = bodyCol;
+    ctx.fillRect(cx - bw * 0.65, ty + bh * 0.33, bw * 0.32, bh * 0.08);
+    // Right arm
+    ctx.fillRect(cx + bw * 0.33, ty + bh * 0.33, bw * 0.32, bh * 0.08);
+
+    // Left leg
+    ctx.fillRect(cx - bw * 0.32, ty + bh * 0.68, bw * 0.13, bh * 0.32);
+    // Right leg
+    ctx.fillRect(cx + bw * 0.19, ty + bh * 0.68, bw * 0.13, bh * 0.32);
+
+    // "DUMMY" label above
+    ctx.globalAlpha = 0.85;
+    ctx.font = 'bold 8px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#000';
+    ctx.shadowBlur = 3;
+    ctx.fillText('DUMMY', cx, ty - 4);
+    ctx.shadowBlur = 0;
+
+    // Health bar
+    const hpPct = Math.max(0, this.health / this.maxHealth);
+    const bw2 = 28, bh2 = 4;
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(cx - bw2 / 2, ty - 14, bw2, bh2);
+    ctx.fillStyle = hpPct > 0.5 ? '#44dd44' : hpPct > 0.25 ? '#ffcc00' : '#ff4444';
+    ctx.fillRect(cx - bw2 / 2, ty - 14, bw2 * hpPct, bh2);
+
+    ctx.restore();
+  }
 }
 
 // ============================================================

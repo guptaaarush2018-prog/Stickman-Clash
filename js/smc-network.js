@@ -65,6 +65,10 @@ const NetworkManager = (function() {
         case 'gameEvent':
           if (_onRemoteEvent) _onRemoteEvent(msg);
           break;
+        case 'gameStateSync':
+          // Guest receives authoritative game state from host
+          if (msg.state) _applyRemoteGameState(msg.state);
+          break;
         case 'ping':
           conn.send({ type: 'pong', ts: msg.ts });
           break;
@@ -234,8 +238,55 @@ const NetworkManager = (function() {
       _sendTimer++;
       if (_sendTimer >= 3) { _sendTimer = 0; this.sendState(localPlayer); }
     },
+
+    // Send full game state to guest (called by host just before game starts)
+    sendGameStateSync(stateObj) {
+      if (!_conn || !_connected || _slot !== 1) return;
+      try { _conn.send({ type: 'gameStateSync', state: stateObj }); } catch(e) {}
+    },
   };
 })();
+
+// Apply game state received from host
+function _applyRemoteGameState(state) {
+  if (!state) return;
+  // Arena
+  if (state.arenaKey) {
+    selectedArena   = state.arenaKey;
+    currentArenaKey = state.arenaKey;
+  }
+  // Platform positions (randomized layout)
+  if (state.platforms && currentArena) {
+    for (let i = 0; i < state.platforms.length && i < currentArena.platforms.length; i++) {
+      const sp = state.platforms[i];
+      const lp = currentArena.platforms[i];
+      if (sp.x !== undefined) lp.x  = sp.x;
+      if (sp.y !== undefined) lp.y  = sp.y;
+      if (sp.w !== undefined) lp.w  = sp.w;
+    }
+  }
+  // Player weapons and classes
+  if (state.p1Weapon) {
+    const sel = document.getElementById('p1Weapon');
+    if (sel) sel.value = state.p1Weapon;
+  }
+  if (state.p2Weapon) {
+    const sel = document.getElementById('p2Weapon');
+    if (sel) sel.value = state.p2Weapon;
+  }
+  if (state.p1Class) {
+    const sel = document.getElementById('p1Class');
+    if (sel) sel.value = state.p1Class;
+  }
+  if (state.p2Class) {
+    const sel = document.getElementById('p2Class');
+    if (sel) sel.value = state.p2Class;
+  }
+  // Chosen lives
+  if (state.lives !== undefined) chosenLives = state.lives;
+  // Game mode
+  if (state.gameMode) { _onlineGameMode = state.gameMode; gameMode = state.gameMode; }
+}
 
 // ============================================================
 // ONLINE MULTIPLAYER — connection + mode setup
@@ -253,6 +304,7 @@ function networkJoinRoom() {
     (slot) => {
       onlineLocalSlot = slot;
       onlineMode = true;
+      if (slot === 1) _advertisePublicRoom(roomCode); // advertise if public
       if (statusEl) statusEl.textContent = slot === 1
         ? `✅ Room "${roomCode}" created — share this code with your opponent!`
         : `✅ Joined room "${roomCode}" — connecting to host…`;
@@ -325,6 +377,80 @@ function networkJoinRoom() {
       }
     },
   );
+}
+
+// ---- Public / Private room type toggle ----
+function setRoomType(type) {
+  _isPublicRoom = (type === 'public');
+  document.getElementById('roomTypePublicBtn')?.classList.toggle('active', _isPublicRoom);
+  document.getElementById('roomTypePrivateBtn')?.classList.toggle('active', !_isPublicRoom);
+  const browser = document.getElementById('publicRoomBrowser');
+  if (browser) browser.style.display = _isPublicRoom ? 'flex' : 'none';
+}
+
+// Refresh public room list from PeerJS server (uses discovery peer trick)
+function refreshPublicRooms() {
+  const listEl = document.getElementById('publicRoomList');
+  if (!listEl) return;
+  listEl.innerHTML = '<span style="color:#556">Searching…</span>';
+  // Public rooms store themselves in localStorage under a shared key prefix
+  // so same-browser tabs can discover each other; cross-device relies on PeerJS
+  try {
+    const keys = Object.keys(localStorage).filter(k => k.startsWith('smcpub_'));
+    _publicRooms = [];
+    const now = Date.now();
+    for (const k of keys) {
+      try {
+        const d = JSON.parse(localStorage.getItem(k));
+        if (d && d.code && (now - d.ts) < 120000) { // 2min TTL
+          _publicRooms.push(d);
+        } else {
+          localStorage.removeItem(k); // expired
+        }
+      } catch(e) {}
+    }
+    _renderPublicRooms();
+  } catch(e) {
+    listEl.innerHTML = '<span style="color:#f88">Error loading rooms.</span>';
+  }
+}
+
+function _renderPublicRooms() {
+  const listEl = document.getElementById('publicRoomList');
+  if (!listEl) return;
+  if (!_publicRooms.length) {
+    listEl.innerHTML = '<span style="color:#556">No public rooms. Create one above!</span>';
+    return;
+  }
+  listEl.innerHTML = '';
+  for (const r of _publicRooms) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:3px 5px;margin:2px 0;background:rgba(0,100,200,0.2);border-radius:4px;cursor:pointer;';
+    row.innerHTML = `<span style="color:#88ddff">🌍 ${r.code}</span><span style="color:#aab;font-size:0.65rem;">${r.host||'Host'}</span>`;
+    row.onclick = () => {
+      const inp = document.getElementById('onlineRoomCode');
+      if (inp) { inp.value = r.code; }
+    };
+    listEl.appendChild(row);
+  }
+}
+
+function _advertisePublicRoom(code) {
+  if (!_isPublicRoom) return;
+  try {
+    const key = 'smcpub_' + code.toUpperCase();
+    localStorage.setItem(key, JSON.stringify({ code: code.toUpperCase(), host: 'Player', ts: Date.now() }));
+    // Refresh every 30s to keep TTL alive
+    _publicRoomCheckTimer = setInterval(() => {
+      if (!NetworkManager.connected) { clearInterval(_publicRoomCheckTimer); localStorage.removeItem(key); return; }
+      localStorage.setItem(key, JSON.stringify({ code: code.toUpperCase(), host: 'Player', ts: Date.now() }));
+    }, 30000);
+  } catch(e) {}
+}
+
+function _removePublicRoom(code) {
+  if (_publicRoomCheckTimer) clearInterval(_publicRoomCheckTimer);
+  try { localStorage.removeItem('smcpub_' + (code||'').toUpperCase()); } catch(e) {}
 }
 
 function setOnlineGameMode(mode) {

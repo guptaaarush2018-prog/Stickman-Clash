@@ -74,6 +74,7 @@ class Fighter {
     this._megaJumpLanded = false;
     this._megaSmashing   = false;
     this._spawnFalling   = false; // megaknight: falls from sky on spawn
+    this._fallStartY     = null;  // Y when megaknight left ground (for fall-height damage)
     this._wanderDir    = 1;  // direction for wander state
     this._wanderTimer  = 0;  // frames left in wander state
     this.coyoteFrames  = 0;  // frames after walking off a platform where ground jump is still allowed
@@ -288,6 +289,16 @@ class Fighter {
       if (gameMode === 'trueform' && tfGravityInverted && !this.isBoss && this.y < 0) {
         this.y = 0; this.vy = Math.abs(this.vy) * 0.4;
       }
+      // Invisible ceiling — prevent players from flying off the top of the screen
+      // Space arena gets a higher ceiling (more room to jump); all others use standard
+      if (!this.isBoss) {
+        const ceilY = (currentArena && currentArena.isLowGravity) ? -60 :   // space/low-grav: generous
+                      -20;                                                     // standard ceiling
+        if (this.y < ceilY) {
+          this.y  = ceilY;
+          if (this.vy < 0) this.vy = 0; // stop upward momentum
+        }
+      }
       for (const pl of currentArena.platforms) this.checkPlatform(pl);
 
     // Coyote time: if player just walked off a platform (was on ground, now isn't),
@@ -295,6 +306,10 @@ class Fighter {
     if (this._prevOnGround && !this.onGround && this.vy > -5 && !this.isBoss) {
       // Walked off edge (vy > -5 means didn't jump off)
       if (this.coyoteFrames === 0) this.coyoteFrames = 6;
+    }
+    // Megaknight: record Y when leaving ground for fall-height damage
+    if (this.charClass === 'megaknight' && this._prevOnGround && !this.onGround) {
+      this._fallStartY = this.y;
     }
     // Enable double jump for ALL entities (including AI/Boss/TrueForm) when they jump off ground
     if (this._prevOnGround && !this.onGround && this.vy <= -5) {
@@ -512,6 +527,31 @@ class Fighter {
       if (this.ragdollTimer > 0 && landVy > 2) {
         spawnParticles(this.cx(), pl.y, this.color, 10);
         this.ragdollSpin = 0;
+      }
+      // MEGAKNIGHT: Fall-height landing damage (any normal landing, not just Mega Jump)
+      if (this.charClass === 'megaknight' && !this._megaJumping && !this._spawnFalling &&
+          this._fallStartY !== null && landVy > 5) {
+        const fallHeight = Math.max(0, this.y - this._fallStartY); // positive = fell down
+        if (fallHeight > 40) {
+          const dmg = Math.max(5, Math.min(40, Math.floor(fallHeight * 0.15)));
+          const _allF = [...players, ...minions, ...trainingDummies];
+          let hitAny = false;
+          for (const f of _allF) {
+            if (f === this || f.health <= 0) continue;
+            const _d = Math.hypot(f.cx() - this.cx(), f.cy() - this.cy());
+            if (_d < 100) {
+              dealDamage(this, f, Math.round(dmg * (1 - _d/100)), Math.round(20 * (1 - _d/100)));
+              hitAny = true;
+            }
+          }
+          if (hitAny || fallHeight > 80) {
+            // Shockwave particle ring
+            spawnParticles(this.cx(), pl.y, '#8844ff', Math.min(20, Math.floor(fallHeight * 0.2)));
+            spawnParticles(this.cx(), pl.y, '#ffffff', 8);
+            if (settings.screenShake) screenShake = Math.max(screenShake, Math.min(fallHeight * 0.1, 14));
+          }
+        }
+        this._fallStartY = null;
       }
       // MEGAKNIGHT: Mega Jump shockwave on landing
       if (this._megaJumping && !this._megaJumpLanded && landVy > 8) {
@@ -741,16 +781,18 @@ class Fighter {
     this.attackTimer = this.attackDuration * 3;
     this.weaponHit   = false;
     if (!this.isBoss) this.invincible = Math.max(this.invincible, 90); // 1.5s i-frames on super
+    // Resolve a safe target — target arg may be undefined in solo/training modes
+    const _superTarget = target || this.target || trainingDummies[0] || players.find(p => p !== this && p.health > 0);
     const superMoves = {
       sword:  () => {
         this.vx = this.facing * 24;
-        if (dist(this, target) < 210) dealDamage(this, target, 60, 30);
+        if (_superTarget && dist(this, _superTarget) < 210) dealDamage(this, _superTarget, 60, 30);
       },
       hammer: () => {
         screenShake = Math.max(screenShake, 48);
         spawnRing(this.cx(), this.y + this.h);
         spawnRing(this.cx(), this.y + this.h);
-        if (dist(this, target) < 230) dealDamage(this, target, 58, 38);
+        if (_superTarget && dist(this, _superTarget) < 230) dealDamage(this, _superTarget, 58, 38);
       },
       gun: () => {
         for (let i = 0; i < 14; i++) {
@@ -762,12 +804,12 @@ class Fighter {
       },
       axe:   () => {
         this.spinning = 75;
-        if (dist(this, target) < 175) dealDamage(this, target, 52, 26);
+        if (_superTarget && dist(this, _superTarget) < 175) dealDamage(this, _superTarget, 52, 26);
       },
       spear: () => {
         this.vx = this.facing * 22;
         this.vy = -10;
-        if (dist(this, target) < 230) dealDamage(this, target, 50, 24);
+        if (_superTarget && dist(this, _superTarget) < 230) dealDamage(this, _superTarget, 50, 24);
       },
       gauntlet: () => {
         screenShake = Math.max(screenShake, 60);
@@ -1235,6 +1277,88 @@ class Fighter {
     if (this.aiReact > 0) { this.aiReact--; return; }
     if (this.ragdollTimer > 0 || this.stunTimer > 0) return;
 
+    // ---- TARGET VALIDATION: reassign if current target is dead/invalid ----
+    if (!this.target || this.target.health <= 0) {
+      const living = [...players, ...trainingDummies].filter(q => q !== this && q.health > 0 && !q.isBoss === !this.isBoss || (!q.isBoss && !this.isBoss));
+      this.target = living.length
+        ? living.reduce((a, b) => Math.hypot(b.cx()-this.cx(),b.cy()-this.cy()) < Math.hypot(a.cx()-this.cx(),a.cy()-this.cy()) ? b : a)
+        : null;
+    }
+
+    // ---- DANGER AVOIDANCE: boss beams ----
+    if (bossBeams && bossBeams.length > 0 && !this.isBoss) {
+      for (const beam of bossBeams) {
+        if (beam.done) continue;
+        const beamDx = Math.abs(beam.x - this.cx());
+        if (beamDx < 50) {
+          // Move away from beam
+          const fleeDir = this.cx() < beam.x ? -1 : 1;
+          if (!this.isEdgeDanger(fleeDir)) {
+            const spd0 = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+            this.vx = fleeDir * spd0 * 2;
+          }
+          if (this.onGround) this.vy = -18;
+          return; // beam avoidance takes priority
+        }
+      }
+    }
+
+    // ---- DANGER AVOIDANCE: floor hazard ----
+    if (!this.isBoss && bossFloorState === 'hazard' && this.y + this.h > 430) {
+      // Floor is lethal — jump or move to a platform
+      if (this.onGround) {
+        const above = this.platformAbove();
+        if (above) {
+          const toPlat = above.x + above.w/2 - this.cx();
+          const spd0 = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+          this.vx = Math.sign(toPlat) * spd0 * 1.5;
+          this.vy = -19;
+          return;
+        }
+        this.vy = -19;
+        return;
+      }
+    }
+
+    // ---- DANGER AVOIDANCE: lava proximity ----
+    if (!this.isBoss && currentArena && currentArena.hasLava && currentArena.lavaY) {
+      const distToLava = currentArena.lavaY - (this.y + this.h);
+      if (distToLava < 80 && this.y + this.h > 380) {
+        if (this.onGround) {
+          const spd0 = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+          this.vx = this.cx() < GAME_W/2 ? spd0 * 2 : -spd0 * 2;
+          this.vy = -19;
+          return;
+        }
+      }
+    }
+
+    // ---- DEADLOCK DETECTION: two bots mirroring each other ----
+    if (!this.isBoss && this.target && this.target.isAI) {
+      this._stuckFrames  = (this._stuckFrames  || 0);
+      this._lastXForStuck = (this._lastXForStuck !== undefined ? this._lastXForStuck : this.x);
+      if (Math.abs(this.x - this._lastXForStuck) < 5) {
+        this._stuckFrames++;
+        if (this._stuckFrames > 180) { // 3 seconds at AI tick rate
+          this._stuckFrames = 0;
+          this._wanderDir   = (Math.random() < 0.5 ? -1 : 1);
+          this._wanderTimer = 40;
+          if (this.onGround) this.vy = -18;
+        }
+      } else {
+        this._stuckFrames = 0;
+      }
+      this._lastXForStuck = this.x;
+    }
+
+    // ---- RANDOM NUDGE: prevents long idle stretches ----
+    if (!this.isBoss && frameCount % 120 === 0 && Math.abs(this.vx) < 0.5 && this.target) {
+      const spd0 = this.aiDiff === 'easy' ? 2.6 : this.aiDiff === 'medium' ? 4.2 : 5.8;
+      this._wanderDir   = (Math.random() < 0.5 ? -1 : 1);
+      this._wanderTimer = 20;
+      this.vx           = this._wanderDir * spd0;
+    }
+
     // ---- STUCK DETECTION: if attacking with no hits for 1s, wander away ----
     if (this.isAI && this.state === 'attacking') {
       if (this.weaponHit) {
@@ -1405,7 +1529,7 @@ class Fighter {
   // ---- DRAW ----
   draw() {
     if (this.backstageHiding) return;
-    if (this.health <= 0 && !this.isBoss) return; // MJS ragdolls handle dead fighter visuals
+    if (this.health <= 0 && !this.isBoss && !this.isDummy) return; // ragdolls handle dead fighter visuals; dummies always draw
 
     ctx.save();
 

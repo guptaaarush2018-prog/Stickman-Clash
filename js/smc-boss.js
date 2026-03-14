@@ -256,48 +256,54 @@ class Boss extends Fighter {
       }
     }
 
-    // Spike attacks — active from phase 1
-    if (this.spikeCooldown > 0) {
-      this.spikeCooldown--;
-    } else if (canAct && t) {
-      const numSpikes = phase >= 2 ? 5 : 3;
-      for (let i = 0; i < numSpikes; i++) {
-        const sx = clamp(t.cx() + (i - Math.floor(numSpikes / 2)) * 40, 20, 880);
-        bossSpikes.push({ x: sx, maxH: 90 + Math.random() * 50, h: 0, phase: 'rising', stayTimer: 0, done: false });
+    // Spike attacks — Phase 3 ONLY (ground spells)
+    if (phase >= 3) {
+      if (this.spikeCooldown > 0) {
+        this.spikeCooldown--;
+      } else if (canAct && t) {
+        const numSpikes = 5;
+        for (let i = 0; i < numSpikes; i++) {
+          const sx = clamp(t.cx() + (i - Math.floor(numSpikes / 2)) * 40, 20, 880);
+          bossSpikes.push({ x: sx, maxH: 90 + Math.random() * 50, h: 0, phase: 'rising', stayTimer: 0, done: false });
+        }
+        this.spikeCooldown = 24; // in AI ticks
+        this.postSpecialPause = 4;
+        showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!', 'From below!']));
       }
-      this.spikeCooldown = phase === 3 ? 24 : phase === 2 ? 36 : 48; // in AI ticks
-      this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s
-      showBossDialogue(randChoice(['Rise!', 'The ground betrays you!', 'Watch your feet!', 'From below!']));
     }
 
-    // Minion spawning (1 at a time phase 1, up to 2 phase 2+)
-    if (this.minionCooldown > 0) {
-      this.minionCooldown--;
-    } else if (minions.filter(m => m.health > 0).length < (phase >= 2 ? 2 : 1)) {
-      const spawnX = Math.random() < 0.5 ? 60 : 840;
-      const spawnY = 200;
-      const mn     = new Minion(spawnX, spawnY);
-      mn.target    = players[0];
-      minions.push(mn);
-      spawnParticles(spawnX, spawnY, '#bb00ee', 24);
-      if (settings.screenShake) screenShake = Math.max(screenShake, 12);
-      this.minionCooldown = phase === 3 ? 20 : phase === 2 ? 36 : 52; // in AI ticks
-      showBossDialogue(randChoice(['Deal with my guests!', 'MINIONS, arise!', 'Handle this!', 'You\'ll need backup...']));
+    // Minion spawning — Phase 2+ ONLY
+    if (phase >= 2) {
+      if (this.minionCooldown > 0) {
+        this.minionCooldown--;
+      } else if (minions.filter(m => m.health > 0).length < (phase >= 3 ? 2 : 1)) {
+        const spawnX = Math.random() < 0.5 ? 60 : 840;
+        const spawnY = 200;
+        const mn     = new Minion(spawnX, spawnY);
+        mn.target    = players[0];
+        minions.push(mn);
+        spawnParticles(spawnX, spawnY, '#bb00ee', 24);
+        if (settings.screenShake) screenShake = Math.max(screenShake, 12);
+        this.minionCooldown = phase === 3 ? 20 : 36; // in AI ticks
+        showBossDialogue(randChoice(['Deal with my guests!', 'MINIONS, arise!', 'Handle this!', 'You\'ll need backup...']));
+      }
     }
 
-    // Beam attacks — active from phase 1 (fewer beams in phase 1)
-    if (this.beamCooldown > 0) {
-      this.beamCooldown--;
-    } else if (canAct && t) {
-      const numBeams = phase === 3 ? 4 : phase === 2 ? 3 : 1;
-      for (let i = 0; i < numBeams; i++) {
-        const spread = (i - Math.floor(numBeams / 2)) * 95;
-        const bx = clamp(t.cx() + spread + (Math.random() - 0.5) * 70, 40, 860);
-        bossBeams.push({ x: bx, warningTimer: 300, activeTimer: 0, phase: 'warning', done: false });
+    // Beam attacks — Phase 2+ ONLY
+    if (phase >= 2) {
+      if (this.beamCooldown > 0) {
+        this.beamCooldown--;
+      } else if (canAct && t) {
+        const numBeams = phase === 3 ? 4 : 2;
+        for (let i = 0; i < numBeams; i++) {
+          const spread = (i - Math.floor(numBeams / 2)) * 95;
+          const bx = clamp(t.cx() + spread + (Math.random() - 0.5) * 70, 40, 860);
+          bossBeams.push({ x: bx, warningTimer: 300, activeTimer: 0, phase: 'warning', done: false });
+        }
+        this.beamCooldown = phase === 3 ? 16 : 28; // in AI ticks
+        this.postSpecialPause = 4;
+        showBossDialogue(randChoice(['Nowhere to hide!', 'Feel the void!', 'Dodge THIS!', 'From below!', 'The light will take you!']));
       }
-      this.beamCooldown = phase === 3 ? 16 : phase === 2 ? 28 : 44; // in AI ticks
-      this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s
-      showBossDialogue(randChoice(['Nowhere to hide!', 'Feel the void!', 'Dodge THIS!', 'From below!', 'The light will take you!']));
     }
 
     // HP-threshold monologue (fires once per threshold crossing) — scaled for 3000 HP

@@ -147,9 +147,25 @@
         <div style="color:#88ccff; font-size:0.72rem; line-height:1.4;">
           🌐 <b>Cross-network play</b> — pick any room code, share it with your opponent. First to join is P1.
         </div>
+        <!-- Room type toggle: Public vs Private -->
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span style="color:#88ccff; font-size:0.75rem;">Room Type:</span>
+          <button id="roomTypePublicBtn" class="btn active" onclick="setRoomType('public')" style="font-size:0.70rem;padding:3px 10px;">🌍 Public</button>
+          <button id="roomTypePrivateBtn" class="btn" onclick="setRoomType('private')" style="font-size:0.70rem;padding:3px 10px;">🔒 Private</button>
+        </div>
         <div style="display:flex; gap:6px; align-items:center;">
           <label style="color:#88ccff; font-size:0.78rem; white-space:nowrap;">Room Code</label>
           <input id="onlineRoomCode" type="text" placeholder="e.g. FIGHT42" maxlength="20" style="flex:1; padding:4px 7px; background:rgba(0,0,0,0.4); border:1px solid rgba(100,180,255,0.4); border-radius:5px; color:#cce; font-size:0.75rem; text-transform:uppercase;">
+        </div>
+        <!-- Public room browser -->
+        <div id="publicRoomBrowser" style="display:flex; flex-direction:column; gap:4px;">
+          <div style="display:flex; gap:5px; align-items:center;">
+            <span style="color:#88ccff; font-size:0.72rem;">Public Rooms</span>
+            <button class="btn" onclick="refreshPublicRooms()" style="font-size:0.65rem;padding:2px 7px;">Refresh</button>
+          </div>
+          <div id="publicRoomList" style="max-height:90px; overflow-y:auto; background:rgba(0,0,0,0.3); border-radius:5px; padding:4px; font-size:0.70rem; color:#aab;">
+            <span style="color:#556;">No public rooms found. Refresh or create one!</span>
+          </div>
         </div>
         <!-- Game mode selector — only visible to the host (slot 1) after joining -->
         <div id="onlineGameModeRow" style="display:none; flex-direction:column; gap:4px;">
@@ -299,6 +315,10 @@
               <label class="setting-item">
                 <input type="checkbox" id="settingPhaseFlash" checked onchange="updateSettings()">
                 <span>Phase Flash</span>
+              </label>
+              <label class="setting-item">
+                <input type="checkbox" id="settingRagdoll" onchange="updateSettings()">
+                <span>Ragdoll Physics</span>
               </label>
             </div>
           </div>
@@ -765,6 +785,10 @@
   <script src="./js/smc-menu.js"></script>
   <!-- Network / online multiplayer -->
   <script src="./js/smc-network.js"></script>
+  <!-- True Matter.js ragdoll system (optional, enabled via settings) -->
+  <script src="./js/smc-ragdoll.js"></script>
+  <!-- Developer debug toolkit (loaded last so all systems exist) -->
+  <script src="./js/smc-debug.js"></script>
 
   <!-- YouTube IFrame API for background music (HTTP/HTTPS only — skipped on file://) -->
   <div id="ytBossPlayer"    style="position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:-9999px;"></div>

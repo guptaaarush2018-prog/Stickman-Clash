@@ -304,13 +304,18 @@ function gameLoop() {
   minions.forEach(m => { if (m.health > 0) m.draw(); });
   minions = minions.filter(m => m.health > 0);
 
-  // Training dummies / bots
-  if (trainingMode) {
+  // Training dummies / bots (also needed in tutorial mode for the tutorial dummy)
+  if (trainingMode || tutorialMode) {
     trainingDummies.forEach(d => { if (d.isDummy || d.health > 0 || d.invincible > 0) d.update(); });
     trainingDummies.forEach(d => { if (d.isDummy || d.health > 0 || d.invincible > 0) d.draw(); });
     // Remove dead bots (lives=0), keep dummies (they auto-heal)
     trainingDummies = trainingDummies.filter(d => {
       if (d.isDummy) return true; // dummies auto-heal, never remove
+      // Decrement lives for dead bots not yet cleaned up (checkDeaths only handles players[])
+      if (d.health <= 0 && d.invincible === 0 && d.lives > 0 && !d.isBoss) {
+        d.lives--;
+        spawnParticles(d.cx(), d.cy(), d.color, 10);
+      }
       return d.health > 0 || d.invincible > 0 || d.lives > 0;
     });
   }
@@ -491,6 +496,15 @@ function gameLoop() {
     ctx.restore();
   }
 
+  // Matter.js ragdoll step (when enabled in settings)
+  if (typeof ragdollStep === 'function') ragdollStep();
+
+  // Debug overlay (drawn last, in screen-space)
+  if (debugMode) {
+    runSanityChecks();
+    renderDebugOverlay(ctx);
+  }
+
   requestAnimationFrame(gameLoop);
 }
 
@@ -507,8 +521,16 @@ document.addEventListener('keydown', e => {
   const chatFocused = document.activeElement && document.activeElement.id === 'chatInput';
   if (!chatFocused && (e.key === 'Escape' || e.key === 'p' || e.key === 'P')) { pauseGame(); return; }
   // Cheat code: type TRUEFORM anywhere in menu to unlock True Form
+  // GAMECONSOLE works any time (menu or in-game)
+  if (e.key.length === 1) {
+    _cheatBuffer = ((_cheatBuffer || '') + e.key.toUpperCase()).slice(-20);
+    if (_cheatBuffer.endsWith('GAMECONSOLE')) {
+      _cheatBuffer = '';
+      openGameConsole();
+    }
+  }
   if (!gameRunning && e.key.length === 1) {
-    _cheatBuffer = ((_cheatBuffer || '') + e.key.toUpperCase()).slice(-12);
+    // _cheatBuffer already updated above — just check for menu-only codes
     if (_cheatBuffer.endsWith('TRUEFORM')) {
       _cheatBuffer = '';
       if (!unlockedTrueBoss) {
@@ -530,19 +552,19 @@ document.addEventListener('keydown', e => {
         setTimeout(() => notif.remove(), 3000);
       }
     }
-    // MEGAKNIGHT cheat: type MEGAKNIGHT in menu
-    if (_cheatBuffer.endsWith('MEGAKNIGHT')) {
+    // MEGAKNIGHT cheat: type CLASSMEGAKNIGHT in menu
+    if (_cheatBuffer.endsWith('CLASSMEGAKNIGHT')) {
       _cheatBuffer = '';
       unlockedMegaknight = true;
       localStorage.setItem('smc_megaknight', '1');
       ['p1Class','p2Class'].forEach(id => {
         const sel = document.getElementById(id);
         if (sel && !sel.querySelector('option[value="megaknight"]')) {
-          const opt = document.createElement('option'); opt.value = 'megaknight'; opt.textContent = 'Megaknight ★'; sel.appendChild(opt);
+          const opt = document.createElement('option'); opt.value = 'megaknight'; opt.textContent = 'Class: Megaknight ★'; sel.appendChild(opt);
         }
       });
       const notif2 = document.createElement('div');
-      notif2.textContent = '★ MEGAKNIGHT UNLOCKED ★';
+      notif2.textContent = '★ Class: MEGAKNIGHT UNLOCKED ★';
       notif2.style.cssText = 'position:fixed;top:20%;left:50%;transform:translateX(-50%);background:rgba(80,0,160,0.95);color:#fff;padding:14px 32px;border-radius:12px;font-size:1.2rem;font-weight:900;letter-spacing:2px;z-index:9999;pointer-events:none;text-align:center;box-shadow:0 0 40px #8844ff;';
       document.body.appendChild(notif2);
       setTimeout(() => notif2.remove(), 3000);
@@ -610,17 +632,21 @@ function processInput() {
 
     // --- Jump (ground jump + double jump) ---
     if (wHeld === 1) {
+      // Megaknight gets higher jump power
+      const jumpPower = p.charClass === 'megaknight' ? -22 : -17;
+      const dblPower  = p.charClass === 'megaknight' ? -16 : -13;
       if (p.onGround || (p.coyoteFrames > 0 && !p.canDoubleJump)) {
         // Ground jump (or coyote jump — briefly after walking off a platform)
-        p.vy = -17;
+        p.vy = jumpPower;
         p.canDoubleJump = true; // enable one double-jump after leaving ground
         p.coyoteFrames  = 0;   // consume coyote window
         if (p._rd) PlayerRagdoll.applyJump(p);
         spawnParticles(p.cx(), p.y + p.h, '#ffffff', 5);
+        if (p.charClass === 'megaknight') spawnParticles(p.cx(), p.y + p.h, '#8844ff', 5);
         SoundManager.jump();
       } else if (p.canDoubleJump) {
         // Double jump in air
-        p.vy = -13;
+        p.vy = dblPower;
         p.canDoubleJump = false;
         spawnParticles(p.cx(), p.cy(), p.color,  8);
         spawnParticles(p.cx(), p.cy(), '#ffffff', 5);
@@ -665,13 +691,13 @@ function applyCode(val) {
     const card = document.getElementById('modeTrueForm');
     if (card) card.style.display = '';
     ok('True Creator unlocked! Start a boss fight.');
-  } else if (code === 'MEGAKNIGHT') {
+  } else if (code === 'CLASSMEGAKNIGHT') {
     unlockedMegaknight = true;
     localStorage.setItem('smc_megaknight','1');
     ['p1Class','p2Class'].forEach(id => {
       const sel = document.getElementById(id);
       if (sel && !sel.querySelector('option[value="megaknight"]')) {
-        const opt = document.createElement('option'); opt.value = 'megaknight'; opt.textContent = 'Megaknight ★'; sel.appendChild(opt);
+        const opt = document.createElement('option'); opt.value = 'megaknight'; opt.textContent = 'Class: Megaknight ★'; sel.appendChild(opt);
       }
     });
     ok('Megaknight class unlocked! Select it in the class dropdown.');
@@ -727,7 +753,7 @@ function applyCode(val) {
     } else { err('Enter KILLBOSS while in-game.'); }
   } else if (code === 'HELP' || code === 'CODES') {
     if (msgEl) {
-      msgEl.textContent = 'TRUEFORM · MEGAKNIGHT · GODMODE · FULLHEAL · SUPERJUMP · KILLBOSS · MAP:<arena> · WEAPON:<key> · CLASS:<key>';
+      msgEl.textContent = 'TRUEFORM · CLASSMEGAKNIGHT · GODMODE · FULLHEAL · SUPERJUMP · KILLBOSS · MAP:<arena> · WEAPON:<key> · CLASS:<key>';
       msgEl.style.color = '#aabbff'; msgEl.style.fontSize = '0.7rem';
     }
   } else {

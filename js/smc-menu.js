@@ -288,6 +288,7 @@ function selectMode(mode) {
   // Show/hide online connection panel
   const onlinePanel = document.getElementById('onlinePanel');
   if (onlinePanel) onlinePanel.style.display = isOnline ? 'flex' : 'none';
+  if (isOnline && typeof refreshPublicRooms === 'function') refreshPublicRooms();
   // Show/hide minigame selection panel
   const mgPanel = document.getElementById('minigamePanel');
   if (mgPanel) mgPanel.style.display = isMinigames ? 'block' : 'none';
@@ -301,9 +302,9 @@ function selectMode(mode) {
   document.getElementById('p2ColorRow').style.display     = hideP2 ? 'none' : 'flex';
   document.getElementById('p2WeaponRow').style.display    = hideP2 ? 'none' : 'flex';
   document.getElementById('p2ClassRow').style.display     = hideP2 ? 'none' : 'flex';
-  // Hide P1 bot toggle in boss modes, tutorial, minigames, trueform (always human-controlled)
+  // Hide P1 bot toggle in tutorial, minigames, trueform — but allow it in boss modes
   const p1BotToggle = document.getElementById('p1BotToggle');
-  if (p1BotToggle) p1BotToggle.style.display = (isBoss || isTutorial || isMinigames || isTrueForm) ? 'none' : '';
+  if (p1BotToggle) p1BotToggle.style.display = (isTutorial || isMinigames || isTrueForm) ? 'none' : '';
   const p2BotToggleEl = document.getElementById('p2BotToggle');
   if (p2BotToggleEl) p2BotToggleEl.style.display = (isBoss2p) ? '' : (isBoss || isTrueForm) ? 'none' : '';
   // Training panel visibility (not in tutorial)
@@ -486,6 +487,11 @@ function updateSettings() {
   if (bossAuraEl)   settings.bossAura   = bossAuraEl.checked;
   if (botPortalEl)  settings.botPortal  = botPortalEl.checked;
   if (phaseFlashEl) settings.phaseFlash = phaseFlashEl.checked;
+  const ragdollEl = document.getElementById('settingRagdoll');
+  if (ragdollEl) {
+    settings.ragdollEnabled = ragdollEl.checked;
+    localStorage.setItem('smc_ragdoll', settings.ragdollEnabled ? '1' : '0');
+  }
 }
 
 function toggleAdvanced() {
@@ -725,6 +731,21 @@ function _startGameCore() {
   currentArena = ARENAS[currentArenaKey];
   initMapPerks(currentArenaKey);
 
+  // Online host: broadcast authoritative game state to guest BEFORE creating fighters
+  if (onlineMode && onlineLocalSlot === 1 && typeof NetworkManager !== 'undefined' && NetworkManager.connected) {
+    const syncState = {
+      arenaKey:  currentArenaKey,
+      gameMode:  gameMode,
+      lives:     chosenLives,
+      p1Weapon:  document.getElementById('p1Weapon')?.value || 'sword',
+      p2Weapon:  document.getElementById('p2Weapon')?.value || 'sword',
+      p1Class:   document.getElementById('p1Class')?.value  || 'none',
+      p2Class:   document.getElementById('p2Class')?.value  || 'none',
+      platforms: (ARENAS[currentArenaKey]?.platforms || []).map(pl => ({ x: pl.x, y: pl.y, w: pl.w })),
+    };
+    NetworkManager.sendGameStateSync(syncState);
+  }
+
   // Resolve weapons & colours
   const w1   = getWeaponChoice('p1Weapon');
   const w2   = getWeaponChoice('p2Weapon');
@@ -734,6 +755,11 @@ function _startGameCore() {
   const p2Diff = (document.getElementById('p2Difficulty')?.value) || 'hard';
   const diff   = p2Diff; // legacy alias used below for p2
   const isBot  = p2IsBot; // bot determined by P2 toggle, not separate mode
+
+  // Rebuild Matter.js ragdoll bounds when ragdoll is enabled
+  if (settings.ragdollEnabled && typeof RagdollSystem !== 'undefined') {
+    RagdollSystem.rebuildBounds();
+  }
 
   // Generate bg elements fresh each game
   generateBgElements();
@@ -1029,6 +1055,17 @@ if (localStorage.getItem('smc_trueform')) {
   const card = document.getElementById('modeTrueForm');
   if (card) card.style.display = '';
 }
+// Restore ragdoll setting checkbox
+(function() {
+  const el = document.getElementById('settingRagdoll');
+  if (el) el.checked = settings.ragdollEnabled;
+})();
+// Init public room browser hidden by default (private is default)
+(function() {
+  const browser = document.getElementById('publicRoomBrowser');
+  if (browser) browser.style.display = 'none'; // hidden until "Public" selected
+  // Also auto-refresh room list when Online mode is opened
+})();
 
 // First-time visit: auto-launch tutorial after a brief delay
 if (!localStorage.getItem('smc_tutorialDone')) {

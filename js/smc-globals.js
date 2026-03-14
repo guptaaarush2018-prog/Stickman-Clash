@@ -75,7 +75,7 @@ let camXTarget = 450, camYTarget = 260, camXCur = 450, camYCur = 260;
 // SETTINGS & FRAME STATE
 // ============================================================
 // User-configurable settings (toggled from menu)
-const settings = { particles: true, screenShake: true, dmgNumbers: true, landingDust: true, bossAura: true, phaseFlash: true };
+const settings = { particles: true, screenShake: true, dmgNumbers: true, landingDust: true, bossAura: true, botPortal: true, phaseFlash: true, ragdollEnabled: (localStorage.getItem('smc_ragdoll') === '1') };
 let bossPhaseFlash     = 0;    // countdown for white screen flash on boss phase transition
 let abilityFlashTimer  = 0;    // frames remaining for ability ring flash
 let abilityFlashPlayer = null; // player who activated ability
@@ -138,6 +138,18 @@ let onlineLocalSlot  = 0;
 let _onlineGameMode  = '2p';
 let _cheatBuffer     = ''; // tracks recent keypresses for cheat codes
 let unlockedMegaknight = (localStorage.getItem('smc_megaknight') === '1');
+// Public room browser state
+let _publicRooms     = [];  // [{code, host, created}] — discovered public rooms
+let _isPublicRoom    = false; // whether current hosted room is public
+let _publicRoomCheckTimer = 0;
+
+// ============================================================
+// DEBUG / DEVELOPER STATE
+// ============================================================
+let debugMode     = false;
+let timeScale     = 1.0;
+let showHitboxes  = false;
+let _debugKeyBuf  = '';  // rolling key buffer for "debugmode" cheat
 
 // ============================================================
 // ENTITY & VISUAL STATE
