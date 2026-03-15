@@ -538,12 +538,24 @@ class TrueForm extends Fighter {
     this._invertCd     = 24;  // 6s
     this._sizeCd       = 24;  // 6s
     this._portalCd     = 16;  // 4s
+    // New attack cooldowns (AI ticks — 1 tick = 15 frames)
+    this._graspCd      = 40;  // Void Grasp    — 10s
+    this._slashCd      = 14;  // Reality Slash — 3.5s
+    this._wellCd       = 30;  // Gravity Well  — 7.5s
+    this._meteorCd     = 50;  // Meteor Crash  — 12.5s
+    this._cloneCd      = 48;  // Shadow Clones — 12s
+    this._chainCd      = 36;  // Chain Slam    — 9s
     this.postSpecialPause = 0;
     this._lastPhase    = 1;
     this._maxLives     = 1;
     // Dodge mechanic
     this._justDodged   = false;
     this._dodgeTimer   = 0;
+    // Anti-repeat and player intelligence
+    this._lastSpecial     = null;
+    this._lastLastSpecial = null;
+    this._stillTimer      = 0;
+    this._lastTargetX     = -999;
   }
 
   getPhase() {
@@ -590,7 +602,7 @@ class TrueForm extends Fighter {
       this._comboDamage = 0;
     }
 
-    // Tick special cooldowns
+    // Tick all special cooldowns
     if (this._gravityCd > 0) this._gravityCd--;
     if (this._warpCd    > 0) this._warpCd--;
     if (this._holeCd    > 0) this._holeCd--;
@@ -598,6 +610,12 @@ class TrueForm extends Fighter {
     if (this._invertCd  > 0) this._invertCd--;
     if (this._sizeCd    > 0) this._sizeCd--;
     if (this._portalCd  > 0) this._portalCd--;
+    if (this._graspCd   > 0) this._graspCd--;
+    if (this._slashCd   > 0) this._slashCd--;
+    if (this._wellCd    > 0) this._wellCd--;
+    if (this._meteorCd  > 0) this._meteorCd--;
+    if (this._cloneCd   > 0) this._cloneCd--;
+    if (this._chainCd   > 0) this._chainCd--;
 
     // Floor-removal countdown
     if (tfFloorRemoved) {
@@ -620,13 +638,18 @@ class TrueForm extends Fighter {
 
     this.facing = dir;
 
-    // --- Special move trigger ---
-    const specialFreq = phase === 3 ? 0.012 : phase === 2 ? 0.008 : 0.004;
+    // --- Player intelligence: detect still-standing / edge / airborne ---
+    const playerMoved = Math.abs(t.cx() - this._lastTargetX) > 8;
+    this._stillTimer  = playerMoved ? 0 : this._stillTimer + 1;
+    this._lastTargetX = t.cx();
+
+    // --- Smart weighted special trigger ---
+    const specialFreq = phase === 3 ? 0.015 : phase === 2 ? 0.010 : 0.005;
     if (Math.random() < specialFreq) {
-      const avail = this._getAvailableSpecials(phase);
-      if (avail.length > 0) {
-        this._doSpecial(avail[Math.floor(Math.random() * avail.length)], t);
-        return; // pause to perform special
+      const move = this._selectWeightedSpecial(phase, t);
+      if (move) {
+        this._doSpecial(move, t);
+        return;
       }
     }
 
@@ -689,23 +712,191 @@ class TrueForm extends Fighter {
     }
   }
 
-  _getAvailableSpecials(phase) {
-    const avail = [];
-    if (this._portalCd  <= 0)               avail.push('portal');
-    if (this._holeCd    <= 0)               avail.push('holes');
-    if (this._sizeCd    <= 0)               avail.push('size');
-    if (this._invertCd  <= 0)               avail.push('invert');
-    if (this._warpCd    <= 0)               avail.push('warp');
-    if (this._gravityCd <= 0 && phase >= 2) avail.push('gravity');
-    if (this._floorCd   <= 0 && phase >= 2 && !tfFloorRemoved) avail.push('floor');
-    return avail;
+  _selectWeightedSpecial(phase, target) {
+    const d          = dist(this, target);
+    const playerEdge = target.x < 130 || target.x + target.w > GAME_W - 130;
+    const playerAir  = !target.onGround;
+    const hpPct      = target.health / target.maxHealth;
+    const w          = {};
+
+    // ── Phase 1+ attacks ──────────────────────────────────────
+    if (this._slashCd  <= 0) w.slash  = 0.22 + (d > 200 ? 0.14 : 0);
+    if (this._meteorCd <= 0) w.meteor = 0.18 + (playerAir ? 0.10 : 0);
+    if (this._portalCd <= 0) w.portal = 0.13 + (this._stillTimer > 8 ? 0.14 : 0);
+    if (this._holeCd   <= 0) w.holes  = 0.10;
+    if (this._sizeCd   <= 0) w.size   = 0.07;
+    if (this._invertCd <= 0) w.invert = 0.07;
+    if (this._warpCd   <= 0) w.warp   = 0.04;
+
+    // ── Phase 2+ attacks ─────────────────────────────────────
+    if (phase >= 2) {
+      if (this._wellCd   <= 0) w.well   = 0.14 + (playerEdge ? 0.20 : 0) + (playerAir ? 0.08 : 0);
+      if (this._cloneCd  <= 0) w.clones = 0.14;
+      if (this._gravityCd <= 0) w.gravity = 0.09;
+      if (this._floorCd  <= 0 && !tfFloorRemoved) w.floor = 0.09;
+    }
+
+    // ── Phase 3+ attacks ─────────────────────────────────────
+    if (phase >= 3) {
+      if (this._graspCd <= 0) w.grasp = 0.22 + (d < 180 ? 0.16 : 0);
+      if (this._chainCd <= 0) w.chain = 0.18 + (d < 120 ? 0.18 : 0) + (hpPct < 0.3 ? 0.14 : 0);
+    }
+
+    // ── Situational boosts ────────────────────────────────────
+    // Player standing still → teleport / slash bonus
+    if (this._stillTimer > 10) {
+      if (w.slash)  w.slash  = (w.slash  || 0) * 2.0;
+      if (w.portal) w.portal = (w.portal || 0) * 2.0;
+      if (w.grasp)  w.grasp  = (w.grasp  || 0) * 1.5;
+    }
+    // Player near arena edge → prefer gravity pull
+    if (playerEdge && w.well) w.well *= 1.8;
+    // Player airborne → prefer slam-type moves
+    if (playerAir) {
+      if (w.meteor) w.meteor *= 1.6;
+      if (w.well)   w.well   = (w.well || 0) * 1.4;
+    }
+    // Player nearly dead → go for finishing moves
+    if (hpPct < 0.25) {
+      if (w.grasp) w.grasp = (w.grasp || 0) * 1.5;
+      if (w.chain) w.chain = (w.chain || 0) * 1.5;
+    }
+
+    // ── Anti-repeat ───────────────────────────────────────────
+    delete w[this._lastSpecial];
+    delete w[this._lastLastSpecial];
+
+    const entries = Object.entries(w);
+    if (!entries.length) return null;
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    let r = Math.random() * total;
+    for (const [key, v] of entries) { r -= v; if (r <= 0) return key; }
+    return entries[entries.length - 1][0];
   }
 
   _doSpecial(move, target) {
-    this.postSpecialPause = 4; // 4 ticks = 60 frames = 1s pause after specials
+    this.postSpecialPause = 4;
     this._comboCount  = 0;
     this._comboDamage = 0;
+    // Anti-repeat tracking
+    this._lastLastSpecial = this._lastSpecial;
+    this._lastSpecial     = move;
+    // Director: specials add intensity
+    if (typeof directorAddIntensity === 'function') directorAddIntensity(0.18);
     switch (move) {
+      // ── NEW: Void Grasp ─────────────────────────────────────
+      case 'grasp': {
+        this._graspCd = 50;
+        this.postSpecialPause = 6;
+        showBossDialogue('You cannot escape.', 180);
+        screenShake = Math.max(screenShake, 22);
+        spawnParticles(this.cx(), this.cy(), '#440044', 22);
+        spawnParticles(this.cx(), this.cy(), '#ffffff',  8);
+        // Pull all non-boss players toward the boss
+        for (const p of players) {
+          if (p.isBoss || p.health <= 0) continue;
+          const ddx = this.cx() - p.cx();
+          const ddy = (this.y + this.h * 0.5) - (p.y + p.h * 0.5);
+          const dd  = Math.hypot(ddx, ddy);
+          if (dd < 280 && dd > 1) {
+            const pull = 20 * (1 - dd / 280);
+            p.vx = (ddx / dd) * pull;
+            p.vy = (ddy / dd) * pull * 0.5 - 4;
+          }
+        }
+        // Schedule a slam hit after the pull lands (~45 frames)
+        tfGraspSlam = { timer: 45 };
+        break;
+      }
+      // ── NEW: Reality Slash ──────────────────────────────────
+      case 'slash': {
+        this._slashCd = 16;
+        this.postSpecialPause = 3;
+        // Teleport instantly behind target
+        const behindOff = (target.facing || 1) * 55;
+        const tpX = clamp(target.cx() + behindOff - this.w / 2, 20, GAME_W - this.w - 20);
+        this.x = tpX;
+        this.y = clamp(target.y, 20, 440);
+        this.facing = (target.cx() > this.cx() ? 1 : -1);
+        spawnParticles(this.cx(), this.cy(), '#ffffff', 20);
+        spawnParticles(this.cx(), this.cy(), '#000000', 12);
+        screenShake = Math.max(screenShake, 12);
+        // Immediate slash damage
+        dealDamage(this, target, 26, 10);
+        // Shockwave — radial force + chip damage to all nearby players
+        for (const p of players) {
+          if (p.isBoss || p.health <= 0) continue;
+          const sdx = p.cx() - this.cx();
+          if (Math.abs(sdx) < 220) {
+            p.vx += (sdx > 0 ? 1 : -1) * 9;
+            if (p !== target) dealDamage(this, p, 8, 5);
+          }
+        }
+        showBossDialogue('Too slow.', 100);
+        break;
+      }
+      // ── NEW: Gravity Well ───────────────────────────────────
+      case 'well': {
+        this._wellCd = 36;
+        this.postSpecialPause = 5;
+        const wellX = GAME_W / 2 + (Math.random() - 0.5) * 200;
+        const wellY = 320 + Math.random() * 60;
+        tfGravityWells.push({ x: wellX, y: wellY, r: 200, timer: 270, maxTimer: 270, strength: 16 });
+        screenShake = Math.max(screenShake, 16);
+        spawnParticles(wellX, wellY, '#440044', 28);
+        spawnParticles(wellX, wellY, '#8800ff', 14);
+        showBossDialogue('The void pulls.', 180);
+        break;
+      }
+      // ── NEW: Meteor Crash ───────────────────────────────────
+      case 'meteor': {
+        this._meteorCd = 60;
+        this.postSpecialPause = 10;
+        this.vy  = -38;
+        this.invincible = 170;
+        tfMeteorCrash = {
+          phase:   'rising',
+          timer:   0,
+          landX:   clamp(target.cx(), 80, GAME_W - 80),
+          boss:    this,
+          shadowR: 0,
+        };
+        spawnParticles(this.cx(), this.cy(), '#000000', 22);
+        spawnParticles(this.cx(), this.cy(), '#ffffff', 10);
+        showBossDialogue('JUDGMENT.', 220);
+        break;
+      }
+      // ── NEW: Shadow Clone Barrage ───────────────────────────
+      case 'clones': {
+        this._cloneCd = 60;
+        this.postSpecialPause = 4;
+        tfClones = [];
+        const realIdx = Math.floor(Math.random() * 3);
+        for (let ci = 0; ci < 3; ci++) {
+          const cx = 120 + Math.random() * (GAME_W - 240);
+          tfClones.push({
+            x: cx, y: target.y || 300,
+            w: this.w, h: this.h,
+            health: 1,
+            timer:  420, // 7 seconds
+            facing: Math.random() < 0.5 ? 1 : -1,
+            attackTimer: 0, animTimer: 0,
+            isReal: ci === realIdx,
+          });
+          spawnParticles(cx, target.y || 300, '#333333', 16);
+        }
+        showBossDialogue('Which one is real?', 220);
+        break;
+      }
+      // ── NEW: Chain Slam Combo ───────────────────────────────
+      case 'chain': {
+        this._chainCd = 42;
+        this.postSpecialPause = 9;
+        screenShake = Math.max(screenShake, 18);
+        showBossDialogue('CHAIN.', 160);
+        tfChainSlam = { stage: 0, timer: 0, target };
+        break;
+      }
       case 'gravity':
         tfGravityInverted = !tfGravityInverted;
         tfGravityTimer    = tfGravityInverted ? 600 : 0; // 10s limit when inverted
@@ -1411,6 +1602,297 @@ function triggerPhaseTransition(entity, phase) {
   }
 }
 
+// ============================================================
+// GRAVITY WELLS
+// ============================================================
+function updateTFGravityWells() {
+  if (!tfGravityWells.length) return;
+  const tf = players.find(p => p.isTrueForm);
+  for (let i = tfGravityWells.length - 1; i >= 0; i--) {
+    const gw = tfGravityWells[i];
+    gw.timer--;
+    if (gw.timer <= 0) { tfGravityWells.splice(i, 1); continue; }
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0) continue;
+      const dx = gw.x - p.cx();
+      const dy = gw.y - (p.y + p.h * 0.5);
+      const dd = Math.hypot(dx, dy);
+      if (dd < gw.r && dd > 1) {
+        const pull = gw.strength * 0.022 * (1 - dd / gw.r);
+        p.vx += (dx / dd) * pull;
+        p.vy += (dy / dd) * pull;
+      }
+      // Damage when very close to well centre
+      if (dd < 32 && p.invincible <= 0) {
+        dealDamage(tf || players[players.length - 1], p, 18, 3);
+        spawnParticles(p.cx(), p.cy(), '#440044', 8);
+      }
+    }
+  }
+}
+
+function drawTFGravityWells() {
+  for (const gw of tfGravityWells) {
+    ctx.save();
+    const alpha = gw.timer < 60 ? gw.timer / 60 : 1;
+    const pulse = 0.85 + 0.15 * Math.sin(Date.now() * 0.006);
+    // Outer pull haze
+    const haze = ctx.createRadialGradient(gw.x, gw.y, gw.r * 0.3, gw.x, gw.y, gw.r);
+    haze.addColorStop(0, `rgba(120,0,200,${0.35 * alpha * pulse})`);
+    haze.addColorStop(0.5, `rgba(60,0,120,${0.18 * alpha})`);
+    haze.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = haze;
+    ctx.beginPath(); ctx.arc(gw.x, gw.y, gw.r, 0, Math.PI * 2); ctx.fill();
+    // Spinning vortex rings
+    for (let ring = 0; ring < 3; ring++) {
+      const rr = gw.r * (0.2 + ring * 0.22);
+      const angle = (Date.now() * 0.002 * (ring % 2 === 0 ? 1 : -1)) + ring * Math.PI * 0.67;
+      ctx.save();
+      ctx.translate(gw.x, gw.y);
+      ctx.rotate(angle);
+      ctx.scale(1, 0.35);
+      ctx.strokeStyle = `rgba(200,80,255,${(0.6 - ring * 0.12) * alpha})`;
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#aa00ff'; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+    // Bright core
+    ctx.shadowColor = '#ff00ff'; ctx.shadowBlur = 20;
+    ctx.fillStyle = `rgba(255,100,255,${0.85 * alpha * pulse})`;
+    ctx.beginPath(); ctx.arc(gw.x, gw.y, 10, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// METEOR CRASH
+// ============================================================
+function updateTFMeteorCrash() {
+  if (!tfMeteorCrash) return;
+  const mc = tfMeteorCrash;
+  mc.timer++;
+  const tf = mc.boss;
+
+  if (mc.phase === 'rising') {
+    // Boss flies upward — when it leaves the screen switch to shadow phase
+    if (tf.y < -80 || mc.timer > 50) {
+      mc.phase = 'shadow';
+      mc.timer = 0;
+      tf.x = mc.landX - tf.w / 2;  // reposition off-screen
+      tf.y = -200;
+      tf.vx = 0; tf.vy = 0;
+    }
+  } else if (mc.phase === 'shadow') {
+    // Shadow circle grows on the ground at landX
+    mc.shadowR = Math.min(60, mc.shadowR + 2);
+    if (mc.timer > 80) {  // after ~1.3s of warning, crash down
+      mc.phase = 'crash';
+      mc.timer = 0;
+      tf.vy = 55;  // slam down hard
+    }
+  } else if (mc.phase === 'crash') {
+    if (tf.onGround || mc.timer > 30) {
+      // Impact
+      screenShake = Math.max(screenShake, 30);
+      spawnParticles(mc.landX, 460, '#000000', 40);
+      spawnParticles(mc.landX, 460, '#ffffff', 20);
+      spawnParticles(mc.landX, 460, '#8800ff', 16);
+      // Shockwave: massive knockback to nearby players
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const sdx = p.cx() - mc.landX;
+        const sdd = Math.abs(sdx);
+        if (sdd < 280) {
+          const force = 28 * (1 - sdd / 280);
+          p.vx = (sdx > 0 ? 1 : -1) * force;
+          p.vy = -force * 0.7;
+          dealDamage(tf, p, Math.round(35 * (1 - sdd / 280) + 8), 0);
+        }
+      }
+      if (typeof directorAddIntensity === 'function') directorAddIntensity(0.3);
+      tfMeteorCrash = null;
+    }
+  }
+}
+
+function drawTFMeteorCrash() {
+  if (!tfMeteorCrash) return;
+  const mc = tfMeteorCrash;
+  if (mc.phase !== 'shadow') return;
+  // Warning shadow circle on the ground
+  ctx.save();
+  const pulse = 0.6 + 0.4 * Math.sin(mc.timer * 0.15);
+  const urgency = Math.min(1, mc.timer / 80); // grows more intense over time
+  const g = ctx.createRadialGradient(mc.landX, 465, 0, mc.landX, 465, mc.shadowR);
+  g.addColorStop(0, `rgba(0,0,0,${0.75 * pulse})`);
+  g.addColorStop(0.5, `rgba(80,0,140,${0.4 * urgency})`);
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(mc.landX, 465, mc.shadowR, 0, Math.PI * 2); ctx.fill();
+  // Warning ring
+  ctx.strokeStyle = `rgba(200,0,255,${0.8 * pulse})`;
+  ctx.lineWidth   = 2.5;
+  ctx.shadowColor = '#ff00ff'; ctx.shadowBlur = 12;
+  ctx.beginPath(); ctx.arc(mc.landX, 465, mc.shadowR, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+// ============================================================
+// SHADOW CLONES
+// ============================================================
+function updateTFClones() {
+  if (!tfClones.length) return;
+  const tf = players.find(p => p.isTrueForm);
+  const humanPlayers = players.filter(p => !p.isBoss && p.health > 0);
+  for (let i = tfClones.length - 1; i >= 0; i--) {
+    const cl = tfClones[i];
+    cl.timer--;
+    cl.animTimer++;
+    if (cl.timer <= 0 || cl.health <= 0) {
+      spawnParticles(cl.x + cl.w / 2, cl.y + cl.h * 0.5, '#333333', 10);
+      tfClones.splice(i, 1);
+      continue;
+    }
+    // Chase nearest human
+    if (humanPlayers.length > 0) {
+      const target = humanPlayers.reduce((a, b) =>
+        Math.abs(b.cx() - (cl.x + cl.w / 2)) < Math.abs(a.cx() - (cl.x + cl.w / 2)) ? b : a);
+      const ddx = target.cx() - (cl.x + cl.w / 2);
+      cl.facing = ddx > 0 ? 1 : -1;
+      if (Math.abs(ddx) > 50) cl.x += cl.facing * 3.2;
+      // Clone attack
+      if (cl.attackTimer > 0) {
+        cl.attackTimer--;
+        if (cl.attackTimer === 0 && Math.abs(ddx) < 55) {
+          dealDamage(tf || players[players.length - 1], target, 12, 6);
+        }
+      } else if (Math.abs(ddx) < 55 && Math.random() < 0.04) {
+        cl.attackTimer = 14;
+      }
+    }
+    // Clones die in one hit — check if any projectile or player attack hit them
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0 || p.attackTimer <= 0) continue;
+      const cx = cl.x + cl.w / 2;
+      if (Math.abs(p.cx() - cx) < 55 && Math.abs((p.y + p.h / 2) - (cl.y + cl.h / 2)) < 50) {
+        // If it's the real clone, deal damage back to the player
+        if (cl.isReal) {
+          dealDamage(tf || players[players.length - 1], p, 25, 12);
+          spawnParticles(cx, cl.y + cl.h * 0.5, '#ffffff', 18);
+          showBossDialogue('You found me.', 120);
+        } else {
+          spawnParticles(cx, cl.y + cl.h * 0.5, '#444444', 14);
+        }
+        cl.health = 0;
+      }
+    }
+  }
+}
+
+function drawTFClones() {
+  for (const cl of tfClones) {
+    ctx.save();
+    const alpha = cl.timer < 45 ? cl.timer / 45 : 0.72;
+    ctx.globalAlpha = alpha;
+    const cx = cl.x + cl.w / 2;
+    const ty = cl.y;
+    const sw = Math.sin(cl.animTimer * 0.22) * 0.45;
+    ctx.shadowColor = '#333333'; ctx.shadowBlur = 6;
+    ctx.strokeStyle = '#555555'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    const headR = 9, headCY = ty + headR + 1, shoulderY = headCY + headR + 5, hipY = shoulderY + 24;
+    // Head
+    ctx.fillStyle = '#222222';
+    ctx.beginPath(); ctx.arc(cx, headCY, headR, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // Body
+    ctx.beginPath(); ctx.moveTo(cx, headCY + headR); ctx.lineTo(cx, hipY); ctx.stroke();
+    // Arms
+    ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(cx + Math.cos(Math.PI * 0.58 + sw) * 20, shoulderY + Math.sin(Math.PI * 0.58 + sw) * 20); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, shoulderY); ctx.lineTo(cx + Math.cos(Math.PI * 0.42 - sw) * 20, shoulderY + Math.sin(Math.PI * 0.42 - sw) * 20); ctx.stroke();
+    // Legs
+    ctx.beginPath(); ctx.moveTo(cx, hipY); ctx.lineTo(cx + Math.cos(Math.PI * 0.5 + sw * 0.9) * 22, hipY + Math.sin(Math.PI * 0.5 + sw * 0.9) * 22); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx, hipY); ctx.lineTo(cx + Math.cos(Math.PI * 0.5 - sw * 0.9) * 22, hipY + Math.sin(Math.PI * 0.5 - sw * 0.9) * 22); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// ============================================================
+// CHAIN SLAM COMBO
+// ============================================================
+function updateTFChainSlam() {
+  if (!tfChainSlam) return;
+  const cs = tfChainSlam;
+  const tf = players.find(p => p.isTrueForm);
+  if (!tf || !cs.target || cs.target.health <= 0) { tfChainSlam = null; return; }
+  cs.timer++;
+  // Stage timing: 0=grab(0-20f), 1=slam(20-40f), 2=kick(40-60f), 3=shockwave(60-80f)
+  if (cs.stage === 0 && cs.timer >= 20) {
+    // Grab: pull target to boss + damage
+    cs.target.x = tf.cx() - cs.target.w / 2 + tf.facing * 30;
+    cs.target.vy = -8;
+    dealDamage(tf, cs.target, 18, 2);
+    spawnParticles(tf.cx(), tf.cy(), '#ffffff', 12);
+    cs.stage = 1; cs.timer = 0;
+  } else if (cs.stage === 1 && cs.timer >= 20) {
+    // Slam: drive target into ground
+    cs.target.vy = 22;
+    cs.target.vx = 0;
+    dealDamage(tf, cs.target, 24, 1);
+    screenShake = Math.max(screenShake, 14);
+    spawnParticles(cs.target.cx(), cs.target.y + cs.target.h, '#ffffff', 16);
+    cs.stage = 2; cs.timer = 0;
+  } else if (cs.stage === 2 && cs.timer >= 20) {
+    // Kick: launch target sideways
+    const kickDir = tf.facing;
+    cs.target.vx = kickDir * 22;
+    cs.target.vy = -10;
+    dealDamage(tf, cs.target, 20, 14);
+    screenShake = Math.max(screenShake, 18);
+    spawnParticles(cs.target.cx(), cs.target.cy(), '#8800ff', 18);
+    cs.stage = 3; cs.timer = 0;
+  } else if (cs.stage === 3 && cs.timer >= 20) {
+    // Shockwave: radial blast
+    screenShake = Math.max(screenShake, 22);
+    spawnParticles(tf.cx(), 460, '#000000', 30);
+    spawnParticles(tf.cx(), 460, '#8800ff', 16);
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0) continue;
+      const sdx = p.cx() - tf.cx();
+      if (Math.abs(sdx) < 300) {
+        p.vx = (sdx > 0 ? 1 : -1) * 20 * (1 - Math.abs(sdx) / 300);
+        p.vy = -14;
+        dealDamage(tf, p, 14, 0);
+      }
+    }
+    if (typeof directorAddIntensity === 'function') directorAddIntensity(0.25);
+    tfChainSlam = null;
+  }
+}
+
+// ============================================================
+// VOID GRASP SLAM (deferred hit after pull)
+// ============================================================
+function updateTFGraspSlam() {
+  if (!tfGraspSlam) return;
+  tfGraspSlam.timer--;
+  if (tfGraspSlam.timer <= 0) {
+    const tf = players.find(p => p.isTrueForm);
+    // Slam everyone near the boss
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0) continue;
+      const dd = Math.hypot(p.cx() - (tf ? tf.cx() : GAME_W / 2), (p.y + p.h * 0.5) - (tf ? tf.cy() : 300));
+      if (dd < 120) {
+        p.vy = 22;  // drive into ground
+        dealDamage(tf || players[players.length - 1], p, 30, 2);
+        screenShake = Math.max(screenShake, 20);
+        spawnParticles(p.cx(), p.cy(), '#440044', 12);
+        spawnParticles(p.cx(), p.cy(), '#ffffff',  6);
+      }
+    }
+    tfGraspSlam = null;
+  }
+}
+
 function resetTFState() {
   tfGravityInverted  = false;
   tfGravityTimer     = 0;
@@ -1419,6 +1901,11 @@ function resetTFState() {
   tfFloorTimer       = 0;
   tfBlackHoles       = [];
   tfSizeTargets.clear();
+  tfGravityWells     = [];
+  tfMeteorCrash      = null;
+  tfClones           = [];
+  tfChainSlam        = null;
+  tfGraspSlam        = null;
   // Restore void arena floor
   if (ARENAS.void) {
     const floorPl = ARENAS.void.platforms.find(p => p.isFloor);

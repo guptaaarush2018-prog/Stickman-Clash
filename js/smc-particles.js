@@ -17,9 +17,18 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
   if (attacker && attacker.charClass === 'kratos' && attacker.rageStacks > 0) {
     actualDmg = Math.round(actualDmg * (1 + Math.min(attacker.rageStacks, 30) * 0.015));
   }
-  // Kratos: Spartan Rage active — +30% damage
+  // Kratos: Spartan Rage active — +30% damage + heals 10% of damage dealt
   if (attacker && attacker.spartanRageTimer > 0) {
     actualDmg = Math.round(actualDmg * 1.3);
+    // Queue heal: accumulate in pool, apply as integer HP
+    attacker._spartanRageHealPool = (attacker._spartanRageHealPool || 0) + actualDmg * 0.10;
+    const healNow = Math.floor(attacker._spartanRageHealPool);
+    if (healNow >= 1) {
+      attacker._spartanRageHealPool -= healNow;
+      attacker.health = Math.min(attacker.maxHealth, attacker.health + healNow);
+      if (settings.dmgNumbers)
+        damageTexts.push(new DamageText(attacker.cx(), attacker.y - 20, healNow, '#44ff44'));
+    }
   }
   // Map perk: power buff
   if (attacker && attacker._powerBuff > 0) actualDmg = Math.round(actualDmg * 1.35);
@@ -107,8 +116,9 @@ function dealDamage(attacker, target, dmg, kbForce, stunMult = 1.0, isSplash = f
   else if (actualDmg >= 30) SoundManager.heavyHit();
   else SoundManager.hit();
 
-  // Achievement tracking
-  if (!target.shielding) {
+  // Achievement / progression tracking — skip if attacker is using a custom weapon
+  const _attackerHasCustomWeapon = attacker && attacker.weapon && typeof attacker.weapon._isCustom === 'boolean' && attacker.weapon._isCustom;
+  if (!target.shielding && !_attackerHasCustomWeapon) {
     // Track damage taken by human players
     if (!target.isAI && !target.isBoss) _achStats.damageTaken += actualDmg;
     // Track ranged damage dealt by human players

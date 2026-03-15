@@ -629,6 +629,7 @@ function _wBuildObj() {
     ability:         abilityFn,
     _color:          color,  // custom metadata
     _abilEffect:     abilEffect,
+    _isCustom:       true,   // blocks achievement/progression tracking
   };
 }
 
@@ -685,15 +686,18 @@ function _wDeleteWeapon(i) {
 }
 
 function wEquipWeapon(pid) {
+  const _allowedModes = new Set(['2p', 'training']);
+  if (typeof gameMode !== 'undefined' && !_allowedModes.has(gameMode)) {
+    alert('Custom weapons can only be used in 1v1 or Training mode.');
+    return;
+  }
   if (typeof players === 'undefined' || !players.length) {
     // Not in game — store for next game start
     const wObj = _wBuildObj();
     if (pid === 'p1') {
-      const sel = document.getElementById('p1Weapon');
-      // Inject into WEAPONS so it appears as an option
       if (typeof WEAPONS !== 'undefined') {
         WEAPONS['_custom_' + Date.now()] = wObj;
-        alert(`Custom weapon ready — it will be used when you start a 2P match.`);
+        alert(`Custom weapon ready — it will be used when you start a 1v1 or Training match.`);
       }
     }
     return;

@@ -611,8 +611,10 @@ function endGame() {
                : null;
 
   // --- Achievement checks on match end ---
+  // Skip all achievements/progression if any non-boss player used a custom weapon
+  const _anyCustomWeapon = players.some(p => !p.isBoss && p.weapon && p.weapon._isCustom);
   // For 2P boss co-op win, treat any survivor as the "winner" for achievements
-  const achievWinner = winner || (bossDefeated ? alive[0] : null);
+  const achievWinner = _anyCustomWeapon ? null : (winner || (bossDefeated ? alive[0] : null));
   if (achievWinner && !achievWinner.isBoss) {
     _achStats.totalWins++;
     _achStats.winStreak++;
@@ -682,7 +684,10 @@ function endGame() {
 // SECRET LETTER HUNT SYSTEM
 // ============================================================
 function syncCodeInput() {
-  const inp = document.getElementById('codeInput');
+  const inp  = document.getElementById('codeInput');
+  const hint = document.getElementById('trueFormHint');
+  // Hide the homepage hint once True Form is unlocked
+  if (hint) hint.style.display = unlockedTrueBoss ? 'none' : '';
   if (!inp) return;
   inp.readOnly = true;
   if (!bossBeaten) {
@@ -1578,7 +1583,8 @@ function updateBossDeathScene() {
   } else if (sc.phase === 'portal_close') {
     if (sc.timer >= 370) {
       bossDeathScene = null;
-      if (!bossBeaten && gameMode === 'boss') {
+      const _customWpnUsed = players.some(p => !p.isBoss && p.weapon && p.weapon._isCustom);
+      if (!bossBeaten && gameMode === 'boss' && !_customWpnUsed) {
         bossBeaten = true;
         localStorage.setItem('smc_bossBeaten', '1');
         showBossBeatenScreen();

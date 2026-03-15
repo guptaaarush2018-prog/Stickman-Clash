@@ -317,6 +317,19 @@ function selectMode(mode) {
     infiniteMode = false;
     selectLives(3);
   }
+  // Custom weapons only allowed in 1v1 and training — hide options in other modes
+  const _allowCustomWeapons = mode === '2p' || mode === 'training';
+  for (const selId of ['p1Weapon', 'p2Weapon']) {
+    const sel = document.getElementById(selId);
+    if (!sel) continue;
+    sel.querySelectorAll('option[value^="_custom_"]').forEach(opt => {
+      opt.hidden = !_allowCustomWeapons;
+    });
+    // If currently selected value is a custom weapon and mode doesn't allow it, reset to sword
+    if (!_allowCustomWeapons && sel.value && sel.value.startsWith('_custom_')) {
+      sel.value = 'sword';
+    }
+  }
 }
 
 const SKIN_COLORS = {
@@ -594,7 +607,13 @@ function toggleStatsLog() {
 
 function getWeaponChoice(id) {
   const v = document.getElementById(id).value;
-  return v === 'random' ? getWeaponChoiceFromPool() : v;
+  const resolved = v === 'random' ? getWeaponChoiceFromPool() : v;
+  // Custom weapons only allowed in 1v1 and training modes
+  const _allowedCustomModes = new Set(['2p', 'training']);
+  if (resolved && resolved.startsWith('_custom_') && !_allowedCustomModes.has(gameMode)) {
+    return 'sword'; // fallback — custom weapons not allowed here
+  }
+  return resolved;
 }
 
 function getClassChoice(id) {

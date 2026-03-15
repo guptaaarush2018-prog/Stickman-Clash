@@ -100,6 +100,11 @@ let tfFloorRemoved     = false;
 let tfFloorTimer       = 0;    // countdown (frames) until floor returns
 let tfBlackHoles       = [];   // { x, y, r, timer, maxTimer }
 let tfSizeTargets      = new Map(); // fighter → {origW, origH, scale}
+let tfGravityWells     = [];   // { x, y, r, timer, maxTimer, strength }
+let tfMeteorCrash      = null; // { phase:'rising'|'shadow'|'crash', timer, landX, boss, shadowR }
+let tfClones           = [];   // { x, y, w, h, health, timer, facing, attackTimer, animTimer, isReal }
+let tfChainSlam        = null; // { stage:0-3, timer, target }
+let tfGraspSlam        = null; // { timer }
 
 // ============================================================
 // SECRET LETTER HUNT

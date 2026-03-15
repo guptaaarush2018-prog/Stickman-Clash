@@ -405,19 +405,15 @@ class Fighter {
         }
       }
 
-      // KRATOS: Spartan Rage at ≤15% HP — heals to 30% max HP + 5s damage boost
+      // KRATOS: Spartan Rage at ≤15% HP — 5s damage boost; heals 10% of damage dealt during rage
       if (this.charClass === 'kratos' && pct <= 0.15) {
-        this.classPerkUsed = true;
-        const healTarget = Math.floor(this.maxHealth * 0.30);
-        const healAmt    = Math.max(0, healTarget - this.health);
-        this.health       = Math.max(this.health, healTarget);
-        this.spartanRageTimer = 300;
+        this.classPerkUsed     = true;
+        this.spartanRageTimer  = 300;
+        this._spartanRageHealPool = 0; // resets each activation
         screenShake = Math.max(screenShake, 24);
         spawnParticles(this.cx(), this.cy(), '#ff4400', 30);
         spawnParticles(this.cx(), this.cy(), '#ff8800', 18);
         spawnParticles(this.cx(), this.cy(), '#ffffff',  8);
-        if (healAmt > 0 && settings.dmgNumbers)
-          damageTexts.push(new DamageText(this.cx(), this.y - 20, healAmt, '#44ff44'));
       }
 
       // NINJA: Shadow Step at ≤25% HP — 2s invincibility + all cooldowns reset

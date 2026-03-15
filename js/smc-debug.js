@@ -268,7 +268,7 @@ function openGameConsole() {
   const ov = document.getElementById('gameConsoleOverlay');
   if (!ov) return;
   _consoleOpen = true;
-  ov.style.display = 'block';
+  ov.style.display = 'flex';
   const inp = document.getElementById('gameConsoleInput');
   if (inp) { inp.value = ''; inp.focus(); }
   _consolePrint('Stickman Clash Console — type HELP for commands.', '#88bbff');

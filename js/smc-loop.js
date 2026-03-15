@@ -327,6 +327,11 @@ function gameLoop() {
   // True Form special updates
   if (gameMode === 'trueform') {
     updateTFBlackHoles();
+    updateTFGravityWells();
+    updateTFMeteorCrash();
+    updateTFClones();
+    updateTFChainSlam();
+    updateTFGraspSlam();
     // Gravity timer: auto-restore after 10 seconds
     if (tfGravityInverted && tfGravityTimer > 0) {
       tfGravityTimer--;
@@ -352,7 +357,12 @@ function gameLoop() {
   drawClassEffects();
   drawCurseAuras();
   updateAndDrawLightningBolts();
-  if (gameMode === 'trueform') drawTFBlackHoles();
+  if (gameMode === 'trueform') {
+    drawTFBlackHoles();
+    drawTFGravityWells();
+    drawTFMeteorCrash();
+    drawTFClones();
+  }
   drawPhaseTransitionRings();
   checkWeaponSparks();
 
