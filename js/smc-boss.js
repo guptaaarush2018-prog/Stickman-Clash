@@ -45,6 +45,15 @@ class Boss extends Fighter {
     this.phaseDialogueFired = new Set();
     this._maxLives          = 1; // boss shows phase indicator, not hearts
     this._lastPhase         = 1; // track phase transitions for animation triggers
+    // Aggression system + player intelligence
+    this._idleTicks       = 0;   // forces a special after 12 ticks (3s)
+    this._runAwayTicks    = 0;   // tracks player fleeing behaviour
+    this._stillTimer      = 0;   // tracks player standing still
+    this._lastTargetX     = -999;
+    // New special cooldowns
+    this._gravPulseCd     = 0;   // Gravity Pulse
+    this._stormCd         = 0;   // Meteor Storm
+    this._groundSlamCd    = 0;   // Ground Slam
   }
 
   getPhase() {
@@ -149,8 +158,34 @@ class Boss extends Fighter {
       return;
     }
 
+    // ── Player intelligence ──────────────────────────────────
+    const playerMoved = Math.abs(t.cx() - this._lastTargetX) > 8;
+    this._stillTimer  = playerMoved ? 0 : this._stillTimer + 1;
+    this._lastTargetX = t.cx();
+
+    const playerFleeing = (dx > 0 && t.vx > 1) || (dx < 0 && t.vx < -1);
+    const playerFar     = d > 280;
+    this._runAwayTicks  = (playerFleeing && playerFar) ? this._runAwayTicks + 1
+                                                        : Math.max(0, this._runAwayTicks - 2);
+
+    // ── Tick new special cooldowns ────────────────────────────
+    if (this._gravPulseCd  > 0) this._gravPulseCd--;
+    if (this._stormCd      > 0) this._stormCd--;
+    if (this._groundSlamCd > 0) this._groundSlamCd--;
+
+    // ── Aggression timer — force a special every 3 s of idle ─
+    this._idleTicks++;
+    const cdScale      = phase === 3 ? 0.55 : phase === 2 ? 0.75 : 1.0;
+    const specialFreq  = phase === 3 ? 0.10 : phase === 2 ? 0.055 : 0.025;
+    const fullD_pre    = dist(this, t);
+    if (canAct && (this._idleTicks >= 12 || Math.random() < specialFreq)) {
+      const fired = this._bossFireSpecial(phase, t, d, fullD_pre, cdScale);
+      if (fired) { this._idleTicks = 0; this.postSpecialPause = Math.max(this.postSpecialPause, 3); return; }
+      if (this._idleTicks >= 12) this._idleTicks = 8; // nothing available yet — back off slightly
+    }
+
     // State machine — use horizontal distance for attack range (boss should attack even when player jumps above)
-    const fullD = dist(this, t);
+    const fullD = fullD_pre;
     if (d < this.weapon.range * 3.5) this.aiState = 'attack'; // wide horizontal trigger
     else if (this.health < 120 && fullD > 160 && Math.random() < 0.008) this.aiState = 'evade';
     else this.aiState = 'chase';
@@ -328,6 +363,106 @@ class Boss extends Fighter {
     }
 
     if (Math.random() < 0.025) this.aiReact = 2; // tighter reaction window than base AI
+  }
+
+  // ── Distance-routed special selector ──────────────────────────────────────
+  // Returns true if a special was fired.
+  _bossFireSpecial(phase, t, d, fullD, cdScale) {
+    const playerEdge  = t.x < 130 || t.x + t.w > GAME_W - 130;
+    const playerAir   = !t.onGround;
+    const playerStill = this._stillTimer > 8;
+    const fleeing     = this._runAwayTicks > 5;
+
+    // ── Close range (< 130 px): Ground Slam ──────────────────
+    if (d < 130 && this._groundSlamCd <= 0) {
+      this._groundSlamCd = Math.ceil(18 * cdScale);
+      // AOE burst: damage + knockback all nearby players
+      screenShake = Math.max(screenShake, 20);
+      spawnParticles(this.cx(), this.y + this.h, '#cc00ee', 30);
+      spawnParticles(this.cx(), this.y + this.h, '#ffffff', 14);
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const dd = dist(this, p);
+        if (dd < 160) {
+          dealDamage(this, p, 28, 14);
+          const rDir = p.cx() > this.cx() ? 1 : -1;
+          p.vx += rDir * 16;
+          p.vy  = Math.min(p.vy, -10);
+        }
+      }
+      // Ring of spikes around impact point
+      for (let i = 0; i < 6; i++) {
+        const sx = clamp(this.cx() + (i - 2.5) * 55, 20, 880);
+        bossSpikes.push({ x: sx, maxH: 70 + Math.random() * 40, h: 0, phase: 'rising', stayTimer: 0, done: false });
+      }
+      showBossDialogue(randChoice(['SHATTER!', 'The ground breaks!', 'SLAM!', 'Feel the impact!']), 150);
+      if (typeof directorAddIntensity === 'function') directorAddIntensity(0.15);
+      return true;
+    }
+
+    // ── Medium range (130–300 px): Gravity Pulse ─────────────
+    if (d >= 80 && d < 320 && this._gravPulseCd <= 0) {
+      this._gravPulseCd = Math.ceil(28 * cdScale);
+      screenShake = Math.max(screenShake, 18);
+      spawnParticles(this.cx(), this.cy(), '#9900cc', 28);
+      spawnParticles(this.cx(), this.cy(), '#cc66ff', 14);
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const ddx = this.cx() - p.cx();
+        const ddy = (this.y + this.h * 0.5) - (p.y + p.h * 0.5);
+        const dd  = Math.hypot(ddx, ddy);
+        if (dd < 350 && dd > 1) {
+          const pull = 22 * (1 - dd / 350);
+          p.vx = (ddx / dd) * pull;
+          p.vy = (ddy / dd) * pull * 0.5 - 5;
+        }
+      }
+      showBossDialogue(randChoice(['Come closer.', 'You cannot run.', 'GRAVITY PULSE!', 'The void calls.']), 180);
+      if (typeof directorAddIntensity === 'function') directorAddIntensity(0.14);
+      return true;
+    }
+
+    // ── Far range / player fleeing: Meteor Storm ─────────────
+    if ((d >= 250 || fleeing) && phase >= 2 && this._stormCd <= 0) {
+      this._stormCd = Math.ceil(32 * cdScale);
+      const count = phase === 3 ? 8 : 5;
+      for (let i = 0; i < count; i++) {
+        const bx = 60 + Math.random() * (GAME_W - 120);
+        bossBeams.push({ x: bx, warningTimer: 240, activeTimer: 0, phase: 'warning', done: false });
+      }
+      screenShake = Math.max(screenShake, 14);
+      showBossDialogue(randChoice(['METEOR STORM!', 'Nowhere is safe.', 'Rain of destruction!', 'JUDGMENT FALLS!']), 220);
+      if (typeof directorAddIntensity === 'function') directorAddIntensity(0.20);
+      return true;
+    }
+
+    // ── Situational: player standing still → teleport behind ─
+    if (playerStill && phase >= 2 && this.teleportCooldown <= 0 && !this.backstageHiding) {
+      bossTeleport(this);
+      this.teleportCooldown = phase === 3 ? 20 : 40;
+      showBossDialogue('Too easy a target.', 160);
+      return true;
+    }
+
+    // ── Situational: player at edge → Gravity Pulse ──────────
+    if (playerEdge && this._gravPulseCd <= 0) {
+      this._gravPulseCd = Math.ceil(28 * cdScale);
+      for (const p of players) {
+        if (p.isBoss || p.health <= 0) continue;
+        const ddx = this.cx() - p.cx();
+        const ddy = (this.y + this.h * 0.5) - (p.y + p.h * 0.5);
+        const dd  = Math.hypot(ddx, ddy) || 1;
+        p.vx = (ddx / dd) * 18;
+        p.vy = (ddy / dd) * 9 - 3;
+      }
+      spawnParticles(this.cx(), this.cy(), '#9900cc', 20);
+      screenShake = Math.max(screenShake, 14);
+      showBossDialogue('You cannot hide at the edges.', 180);
+      if (typeof directorAddIntensity === 'function') directorAddIntensity(0.12);
+      return true;
+    }
+
+    return false;
   }
 }
 
@@ -556,6 +691,12 @@ class TrueForm extends Fighter {
     this._lastLastSpecial = null;
     this._stillTimer      = 0;
     this._lastTargetX     = -999;
+    // Aggression timer (forces a special after idle)
+    this._idleTicks       = 0;
+    // Running-away detection
+    this._runAwayTicks    = 0;
+    // Shockwave cooldown
+    this._shockwaveCd     = 0;
   }
 
   getPhase() {
@@ -610,12 +751,13 @@ class TrueForm extends Fighter {
     if (this._invertCd  > 0) this._invertCd--;
     if (this._sizeCd    > 0) this._sizeCd--;
     if (this._portalCd  > 0) this._portalCd--;
-    if (this._graspCd   > 0) this._graspCd--;
-    if (this._slashCd   > 0) this._slashCd--;
-    if (this._wellCd    > 0) this._wellCd--;
-    if (this._meteorCd  > 0) this._meteorCd--;
-    if (this._cloneCd   > 0) this._cloneCd--;
-    if (this._chainCd   > 0) this._chainCd--;
+    if (this._graspCd     > 0) this._graspCd--;
+    if (this._slashCd     > 0) this._slashCd--;
+    if (this._wellCd      > 0) this._wellCd--;
+    if (this._meteorCd    > 0) this._meteorCd--;
+    if (this._cloneCd     > 0) this._cloneCd--;
+    if (this._chainCd     > 0) this._chainCd--;
+    if (this._shockwaveCd > 0) this._shockwaveCd--;
 
     // Floor-removal countdown
     if (tfFloorRemoved) {
@@ -638,19 +780,31 @@ class TrueForm extends Fighter {
 
     this.facing = dir;
 
-    // --- Player intelligence: detect still-standing / edge / airborne ---
+    // --- Player intelligence: detect still-standing / edge / airborne / fleeing ---
     const playerMoved = Math.abs(t.cx() - this._lastTargetX) > 8;
     this._stillTimer  = playerMoved ? 0 : this._stillTimer + 1;
     this._lastTargetX = t.cx();
 
-    // --- Smart weighted special trigger ---
-    const specialFreq = phase === 3 ? 0.015 : phase === 2 ? 0.010 : 0.005;
-    if (Math.random() < specialFreq) {
+    const dx_  = t.cx() - this.cx();
+    const playerFleeing = (dx_ < 0 && t.vx < -1) || (dx_ > 0 && t.vx > 1);
+    const playerFar = Math.abs(dx_) > 280;
+    this._runAwayTicks = (playerFleeing && playerFar) ? this._runAwayTicks + 1
+                                                       : Math.max(0, this._runAwayTicks - 2);
+
+    // --- Aggression timer + smart weighted special trigger ---
+    // Higher special frequency than before; aggression timer forces action if idle ≥ 12 ticks (3s)
+    this._idleTicks++;
+    const specialFreq  = phase === 3 ? 0.12 : phase === 2 ? 0.065 : 0.035;
+    const forceSpecial = this._idleTicks >= 12;
+    if (forceSpecial || Math.random() < specialFreq) {
       const move = this._selectWeightedSpecial(phase, t);
       if (move) {
+        this._idleTicks = 0;
         this._doSpecial(move, t);
         return;
       }
+      // Nothing available yet — at least reset idle so we don't spam every tick
+      if (forceSpecial) this._idleTicks = 8;
     }
 
     // --- Movement: chase to melee range ---
@@ -720,46 +874,78 @@ class TrueForm extends Fighter {
     const w          = {};
 
     // ── Phase 1+ attacks ──────────────────────────────────────
-    if (this._slashCd  <= 0) w.slash  = 0.22 + (d > 200 ? 0.14 : 0);
-    if (this._meteorCd <= 0) w.meteor = 0.18 + (playerAir ? 0.10 : 0);
-    if (this._portalCd <= 0) w.portal = 0.13 + (this._stillTimer > 8 ? 0.14 : 0);
-    if (this._holeCd   <= 0) w.holes  = 0.10;
-    if (this._sizeCd   <= 0) w.size   = 0.07;
-    if (this._invertCd <= 0) w.invert = 0.07;
-    if (this._warpCd   <= 0) w.warp   = 0.04;
+    if (this._slashCd     <= 0) w.slash     = 0.20;
+    if (this._meteorCd    <= 0) w.meteor    = 0.16;
+    if (this._portalCd    <= 0) w.portal    = 0.12;
+    if (this._holeCd      <= 0) w.holes     = 0.09;
+    if (this._shockwaveCd <= 0) w.shockwave = 0.14;
+    if (this._sizeCd      <= 0) w.size      = 0.07;
+    if (this._invertCd    <= 0) w.invert    = 0.07;
+    if (this._warpCd      <= 0) w.warp      = 0.04;
 
     // ── Phase 2+ attacks ─────────────────────────────────────
     if (phase >= 2) {
-      if (this._wellCd   <= 0) w.well   = 0.14 + (playerEdge ? 0.20 : 0) + (playerAir ? 0.08 : 0);
-      if (this._cloneCd  <= 0) w.clones = 0.14;
+      if (this._wellCd    <= 0) w.well    = 0.14;
+      if (this._cloneCd   <= 0) w.clones  = 0.14;
       if (this._gravityCd <= 0) w.gravity = 0.09;
-      if (this._floorCd  <= 0 && !tfFloorRemoved) w.floor = 0.09;
+      if (this._floorCd   <= 0 && !tfFloorRemoved) w.floor = 0.09;
     }
 
     // ── Phase 3+ attacks ─────────────────────────────────────
     if (phase >= 3) {
-      if (this._graspCd <= 0) w.grasp = 0.22 + (d < 180 ? 0.16 : 0);
-      if (this._chainCd <= 0) w.chain = 0.18 + (d < 120 ? 0.18 : 0) + (hpPct < 0.3 ? 0.14 : 0);
+      if (this._graspCd <= 0) w.grasp = 0.22;
+      if (this._chainCd <= 0) w.chain = 0.18;
+    }
+
+    // ── Distance zone modifiers ───────────────────────────────
+    const closeDist = d < 100;
+    const medDist   = d >= 100 && d < 260;
+    const farDist   = d >= 260;
+
+    if (closeDist) {
+      if (w.chain)     w.chain     = (w.chain     || 0) * 2.2;
+      if (w.grasp)     w.grasp     = (w.grasp     || 0) * 2.0;
+      if (w.shockwave) w.shockwave = (w.shockwave || 0) * 1.6;
+    }
+    if (medDist) {
+      if (w.well)      w.well      = (w.well      || 0) * 2.0;
+      if (w.shockwave) w.shockwave = (w.shockwave || 0) * 2.2;
+      if (w.holes)     w.holes     = (w.holes     || 0) * 1.5;
+    }
+    if (farDist) {
+      if (w.meteor)    w.meteor    = (w.meteor    || 0) * 2.8;
+      if (w.slash)     w.slash     = (w.slash     || 0) * 2.2;
+      if (w.warp)      w.warp      = (w.warp      || 0) * 2.0;
     }
 
     // ── Situational boosts ────────────────────────────────────
-    // Player standing still → teleport / slash bonus
-    if (this._stillTimer > 10) {
-      if (w.slash)  w.slash  = (w.slash  || 0) * 2.0;
-      if (w.portal) w.portal = (w.portal || 0) * 2.0;
-      if (w.grasp)  w.grasp  = (w.grasp  || 0) * 1.5;
+    // Player standing still → teleport behind them
+    if (this._stillTimer > 8) {
+      if (w.slash)  w.slash  = (w.slash  || 0) * 2.2;
+      if (w.portal) w.portal = (w.portal || 0) * 2.2;
+      if (w.grasp)  w.grasp  = (w.grasp  || 0) * 1.6;
     }
-    // Player near arena edge → prefer gravity pull
-    if (playerEdge && w.well) w.well *= 1.8;
-    // Player airborne → prefer slam-type moves
+    // Player running away → intercept with meteor or slash
+    if (this._runAwayTicks > 5) {
+      if (w.meteor) w.meteor = (w.meteor || 0) * 3.0;
+      if (w.slash)  w.slash  = (w.slash  || 0) * 2.5;
+    }
+    // Player near arena edge → pull with gravity well
+    if (playerEdge) {
+      if (w.well)     w.well     = (w.well     || 0) * 2.2;
+      if (w.grasp)    w.grasp    = (w.grasp    || 0) * 1.6;
+      if (w.shockwave) w.shockwave = (w.shockwave || 0) * 1.4;
+    }
+    // Player airborne → slam them down
     if (playerAir) {
-      if (w.meteor) w.meteor *= 1.6;
-      if (w.well)   w.well   = (w.well || 0) * 1.4;
+      if (w.meteor)    w.meteor    = (w.meteor    || 0) * 1.8;
+      if (w.well)      w.well      = (w.well      || 0) * 1.5;
+      if (w.shockwave) w.shockwave = (w.shockwave || 0) * 1.3;
     }
-    // Player nearly dead → go for finishing moves
+    // Player nearly dead → finishing moves
     if (hpPct < 0.25) {
-      if (w.grasp) w.grasp = (w.grasp || 0) * 1.5;
-      if (w.chain) w.chain = (w.chain || 0) * 1.5;
+      if (w.grasp) w.grasp = (w.grasp || 0) * 1.8;
+      if (w.chain) w.chain = (w.chain || 0) * 1.8;
     }
 
     // ── Anti-repeat ───────────────────────────────────────────
@@ -778,15 +964,19 @@ class TrueForm extends Fighter {
     this.postSpecialPause = 4;
     this._comboCount  = 0;
     this._comboDamage = 0;
+    this._idleTicks   = 0;
     // Anti-repeat tracking
     this._lastLastSpecial = this._lastSpecial;
     this._lastSpecial     = move;
     // Director: specials add intensity
     if (typeof directorAddIntensity === 'function') directorAddIntensity(0.18);
+    // Phase-based cooldown multiplier — phase 3 recharges ~45% faster
+    const phase  = this.getPhase();
+    const cdMult = phase === 3 ? 0.55 : phase === 2 ? 0.75 : 1.0;
     switch (move) {
       // ── NEW: Void Grasp ─────────────────────────────────────
       case 'grasp': {
-        this._graspCd = 50;
+        this._graspCd = Math.ceil(50 * cdMult);
         this.postSpecialPause = 6;
         showBossDialogue('You cannot escape.', 180);
         screenShake = Math.max(screenShake, 22);
@@ -810,7 +1000,7 @@ class TrueForm extends Fighter {
       }
       // ── NEW: Reality Slash ──────────────────────────────────
       case 'slash': {
-        this._slashCd = 16;
+        this._slashCd = Math.ceil(16 * cdMult);
         this.postSpecialPause = 3;
         // Teleport instantly behind target
         const behindOff = (target.facing || 1) * 55;
@@ -837,7 +1027,7 @@ class TrueForm extends Fighter {
       }
       // ── NEW: Gravity Well ───────────────────────────────────
       case 'well': {
-        this._wellCd = 36;
+        this._wellCd = Math.ceil(36 * cdMult);
         this.postSpecialPause = 5;
         const wellX = GAME_W / 2 + (Math.random() - 0.5) * 200;
         const wellY = 320 + Math.random() * 60;
@@ -850,7 +1040,7 @@ class TrueForm extends Fighter {
       }
       // ── NEW: Meteor Crash ───────────────────────────────────
       case 'meteor': {
-        this._meteorCd = 60;
+        this._meteorCd = Math.ceil(60 * cdMult);
         this.postSpecialPause = 10;
         this.vy  = -38;
         this.invincible = 170;
@@ -868,7 +1058,7 @@ class TrueForm extends Fighter {
       }
       // ── NEW: Shadow Clone Barrage ───────────────────────────
       case 'clones': {
-        this._cloneCd = 60;
+        this._cloneCd = Math.ceil(60 * cdMult);
         this.postSpecialPause = 4;
         tfClones = [];
         const realIdx = Math.floor(Math.random() * 3);
@@ -890,7 +1080,7 @@ class TrueForm extends Fighter {
       }
       // ── NEW: Chain Slam Combo ───────────────────────────────
       case 'chain': {
-        this._chainCd = 42;
+        this._chainCd = Math.ceil(42 * cdMult);
         this.postSpecialPause = 9;
         screenShake = Math.max(screenShake, 18);
         showBossDialogue('CHAIN.', 160);
@@ -900,7 +1090,7 @@ class TrueForm extends Fighter {
       case 'gravity':
         tfGravityInverted = !tfGravityInverted;
         tfGravityTimer    = tfGravityInverted ? 600 : 0; // 10s limit when inverted
-        this._gravityCd = 48; // 48 AI ticks = 720 frames = 12s
+        this._gravityCd = Math.ceil(48 * cdMult);
         showBossDialogue(tfGravityInverted ? 'Down is up now.' : 'Gravity returns.', 180);
         spawnParticles(this.cx(), this.cy(), '#ffffff', 22);
         break;
@@ -908,19 +1098,19 @@ class TrueForm extends Fighter {
         const warpPool = Object.keys(ARENAS).filter(k => !['creator','void','soccer','tutorial'].includes(k));
         const newKey   = warpPool[Math.floor(Math.random() * warpPool.length)];
         tfWarpArena(newKey);
-        this._warpCd = 80; // 80 ticks = 1200 frames = 20s
+        this._warpCd = Math.ceil(80 * cdMult);
         showBossDialogue('A new stage.', 150);
         break;
       }
       case 'holes':
         spawnTFBlackHoles();
-        this._holeCd = 36; // 36 ticks = 540 frames = 9s
+        this._holeCd = Math.ceil(36 * cdMult);
         showBossDialogue('Consume.', 110);
         break;
       case 'floor': {
         tfFloorRemoved = true;
         tfFloorTimer   = 1200; // 20 seconds at 60fps (tfFloorTimer is decremented every frame)
-        this._floorCd  = 120; // 120 ticks = 1800 frames = 30s
+        this._floorCd  = Math.ceil(120 * cdMult);
         const floorPl = currentArena.platforms.find(p => p.isFloor);
         if (floorPl) floorPl.isFloorDisabled = true;
         showBossDialogue('There is no ground to stand on.', 240);
@@ -930,7 +1120,7 @@ class TrueForm extends Fighter {
       }
       case 'invert':
         tfControlsInverted = !tfControlsInverted;
-        this._invertCd = 36; // 36 ticks = 540 frames = 9s
+        this._invertCd = Math.ceil(36 * cdMult);
         showBossDialogue(tfControlsInverted ? 'Your body refuses you.' : 'Control returns.', 180);
         spawnParticles(this.cx(), this.cy(), '#aaaaaa', 16);
         break;
@@ -943,14 +1133,45 @@ class TrueForm extends Fighter {
         if (Math.random() < 0.45) {
           tfSetSize(this, clamp(0.5 + Math.random() * 0.9, 0.4, 1.5));
         }
-        this._sizeCd = 32; // 32 ticks = 480 frames = 8s
+        this._sizeCd = Math.ceil(32 * cdMult);
         showBossDialogue('Size means nothing here.', 180);
         break;
       }
       case 'portal':
         tfPortalTeleport(this, target);
-        this._portalCd = 24; // 24 ticks = 360 frames = 6s
+        this._portalCd = Math.ceil(24 * cdMult);
         break;
+      // ── NEW: Shockwave Pulse ─────────────────────────────────
+      case 'shockwave': {
+        this._shockwaveCd = Math.ceil(20 * cdMult);
+        this.postSpecialPause = 3;
+        if (this.onGround) {
+          screenShake = Math.max(screenShake, 22);
+          spawnParticles(this.cx(), this.y + this.h, '#ffffff', 30);
+          spawnParticles(this.cx(), this.y + this.h, '#440044', 22);
+          spawnParticles(this.cx(), this.y + this.h, '#8800ff', 14);
+          const bossRef = this;
+          for (let ri = 0; ri < 3; ri++) {
+            tfShockwaves.push({
+              x: bossRef.cx(), y: bossRef.y + bossRef.h,
+              r: 12 + ri * 6, maxR: 260 + ri * 70,
+              timer: 38 + ri * 9, maxTimer: 38 + ri * 9,
+              boss: bossRef, hit: new Set(),
+            });
+          }
+        } else {
+          // Air slam: crash down fast, wave spawns when landing is detected by updateTFShockwaves
+          this.vy = Math.max(this.vy, 24);
+          tfShockwaves.push({
+            x: this.cx(), y: this.y + this.h,
+            r: 0, maxR: 0,    // zero-size sentinel — spawns real waves on contact
+            timer: 1, maxTimer: 1,
+            boss: this, hit: new Set(), pendingLanding: true,
+          });
+        }
+        showBossDialogue(randChoice(['IMPACT!', 'The world shakes.', 'SHOCKWAVE!', 'Feel it trembling.']), 140);
+        break;
+      }
     }
   }
 
@@ -1893,6 +2114,74 @@ function updateTFGraspSlam() {
   }
 }
 
+// ── Shockwave Pulse ──────────────────────────────────────────────────────────
+function updateTFShockwaves() {
+  for (const sw of tfShockwaves) {
+    if (sw.done) continue;
+    // Air-slam sentinel: wait until boss lands, then spawn real waves
+    if (sw.pendingLanding) {
+      if (sw.boss && sw.boss.onGround) {
+        sw.pendingLanding = false;
+        if (typeof screenShake !== 'undefined') screenShake = Math.max(screenShake, 22);
+        spawnParticles(sw.boss.cx(), sw.boss.y + sw.boss.h, '#ffffff', 26);
+        spawnParticles(sw.boss.cx(), sw.boss.y + sw.boss.h, '#440044', 16);
+        for (let ri = 0; ri < 3; ri++) {
+          tfShockwaves.push({
+            x: sw.boss.cx(), y: sw.boss.y + sw.boss.h,
+            r: 12 + ri * 6, maxR: 260 + ri * 70,
+            timer: 38 + ri * 9, maxTimer: 38 + ri * 9,
+            boss: sw.boss, hit: new Set(),
+          });
+        }
+      } else {
+        sw.timer--;
+        if (sw.timer <= 0) sw.done = true;
+      }
+      continue;
+    }
+    const speed = (sw.maxR - sw.r) / (sw.timer + 1) * 1.6;
+    sw.r = Math.min(sw.r + speed, sw.maxR);
+    sw.timer--;
+    if (sw.timer <= 0 || sw.r >= sw.maxR) { sw.done = true; continue; }
+    // Damage players inside the ring band
+    for (const p of players) {
+      if (p.isBoss || p.health <= 0 || sw.hit.has(p)) continue;
+      const pd = Math.hypot(p.cx() - sw.x, (p.y + p.h * 0.5) - sw.y);
+      if (pd < sw.r + 20 && pd > sw.r - 22) {
+        sw.hit.add(p);
+        dealDamage(sw.boss || null, p, 15, 9);
+        const rDir = p.cx() > sw.x ? 1 : -1;
+        p.vx += rDir * 13;
+        p.vy  = Math.min(p.vy, -7);
+      }
+    }
+  }
+  tfShockwaves = tfShockwaves.filter(sw => !sw.done);
+}
+
+function drawTFShockwaves() {
+  for (const sw of tfShockwaves) {
+    if (sw.done || sw.pendingLanding || sw.r < 2) continue;
+    const progress = 1 - sw.timer / sw.maxTimer;
+    const alpha    = progress < 0.85 ? Math.min(1, progress / 0.25) * 0.75
+                                      : (1 - (progress - 0.85) / 0.15) * 0.75;
+    if (alpha <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle  = '#cc00ff';
+    ctx.lineWidth    = 3.5;
+    ctx.shadowColor  = '#ff00ff';
+    ctx.shadowBlur   = 14;
+    ctx.beginPath(); ctx.arc(sw.x, sw.y, sw.r, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = alpha * 0.4;
+    ctx.strokeStyle  = '#ffffff';
+    ctx.lineWidth    = 1.5;
+    ctx.shadowBlur   = 6;
+    ctx.beginPath(); ctx.arc(sw.x, sw.y, sw.r + 8, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function resetTFState() {
   tfGravityInverted  = false;
   tfGravityTimer     = 0;
@@ -1906,6 +2195,7 @@ function resetTFState() {
   tfClones           = [];
   tfChainSlam        = null;
   tfGraspSlam        = null;
+  tfShockwaves       = [];
   // Restore void arena floor
   if (ARENAS.void) {
     const floorPl = ARENAS.void.platforms.find(p => p.isFloor);

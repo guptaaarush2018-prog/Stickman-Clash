@@ -332,6 +332,7 @@ function gameLoop() {
     updateTFClones();
     updateTFChainSlam();
     updateTFGraspSlam();
+    updateTFShockwaves();
     // Gravity timer: auto-restore after 10 seconds
     if (tfGravityInverted && tfGravityTimer > 0) {
       tfGravityTimer--;
@@ -362,6 +363,7 @@ function gameLoop() {
     drawTFGravityWells();
     drawTFMeteorCrash();
     drawTFClones();
+    drawTFShockwaves();
   }
   drawPhaseTransitionRings();
   checkWeaponSparks();

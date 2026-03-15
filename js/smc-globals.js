@@ -105,6 +105,7 @@ let tfMeteorCrash      = null; // { phase:'rising'|'shadow'|'crash', timer, land
 let tfClones           = [];   // { x, y, w, h, health, timer, facing, attackTimer, animTimer, isReal }
 let tfChainSlam        = null; // { stage:0-3, timer, target }
 let tfGraspSlam        = null; // { timer }
+let tfShockwaves       = [];   // { x, y, r, maxR, timer, maxTimer, boss, hit:Set }
 
 // ============================================================
 // SECRET LETTER HUNT
